@@ -5,7 +5,7 @@ replica_batch_size: 1000
 copy_max_memory: 300M
 my_database:  db_replica
 pg_database: db_replication
-copy_mode: 'file' 
+copy_mode: 'file'
 #copy_mode: 'direct'
 
 #seconds between each replica loop

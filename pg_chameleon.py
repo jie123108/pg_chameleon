@@ -2,11 +2,8 @@
 import argparse
 from pg_chameleon import replica_engine
 commands = [
-					'create_schema',
-					'init_replica',
-					'start_replica',
-					'upgrade_schema',
-					'drop_schema'
+	'init_replica',
+	'start_replica',
 	]
 command_help = 'Available commands, ' + ','.join(commands)
 
