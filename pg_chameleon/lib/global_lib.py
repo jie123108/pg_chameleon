@@ -40,7 +40,7 @@ class global_config(object):
 		configfile.close()
 		
 		connectfile=open(self.connection_file, 'r')
-		conndic=yaml.load(connectfile.read())
+		self.conndic=yaml.load(connectfile.read())
 		connectfile.close()
 		
 		try:
@@ -76,9 +76,27 @@ class global_config(object):
 		except KeyError as key_missing:
 			print('Missing key %s in configuration file. check config/config-example.yaml for reference' % (key_missing, ))
 			sys.exit()
-		print(conndic["obfuscated"])
+		
 
 class replica_engine(object):
 	def __init__(self):
-		self.global_config=None
+		self.global_config=global_config()
 		
+	def init_replica(self, replica_key):
+		if replica_key == "":
+			print("**FATAL - You should specify the replica to initialise.")
+			sys.exit()
+
+	def list_replica(self):
+		self.global_config.load_config()
+		for connection in self.global_config.conndic:
+			replica_conn=self.global_config.conndic[connection]
+			my_conn=replica_conn["mysql_conn"]
+			pg_conn=replica_conn["pg_conn"]
+			print("Replica ===> %s" % (connection, ))
+			print("======== MySQL ========")
+			print("Host %(host)s  - port: %(port)s - Schema: %(my_database)s" % (my_conn))
+			print("======== PostgreSQL ========")
+			print("Host %(host)s  - port: %(port)s - Database: %(pg_database)s -  Destination Schema: %(destination_schema)s" % (pg_conn))
+			print(" ")
+			
