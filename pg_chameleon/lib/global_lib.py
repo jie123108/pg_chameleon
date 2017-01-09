@@ -8,14 +8,13 @@ from datetime import datetime
 
 class global_config(object):
 	"""
-		This class parses the configuration file which defaults to config/config.yaml if not specified.
+		This class parses the configuration file which defaults to config/config.yaml and the config/connection.yaml if not specified.
 		The class variables used by the other libraries are retrieved from the yaml configuration file. 
 		A separate connection file defaults to config/connection.yaml if no file is specified.
 		The constructor checks if the configuration file is present and emits an error message followed by
 		the sys.exit() command if the files are missing. 
 		The class sets the log output file name using the start date and  from the parameter command.  If the log destination is stdout then the logfile is ignored
 		
-		:param command: the command specified on the pg_chameleon.py command line
 	
 	"""
 	def __init__(self, load_config=False, config_file='config/config.yaml', connection_file='config/connection.yaml'):
@@ -28,6 +27,8 @@ class global_config(object):
 			self.load_config()
 	
 	def load_config(self):
+		""" 
+		"""
 		if not os.path.isfile(self.config_file):
 				print("**FATAL - configuration file missing **\ncopy config/config-example.yaml to %s and set your configuration settings." % (self.config_file))
 				sys.exit()
@@ -81,7 +82,10 @@ class global_config(object):
 class replica_engine(object):
 	def __init__(self):
 		self.global_config=global_config()
-		
+	
+	def create_service_schema(self):
+		print("ok")
+	
 	def init_replica(self, replica_key):
 		if replica_key == "":
 			print("**FATAL - You should specify the replica to initialise.")
@@ -93,10 +97,8 @@ class replica_engine(object):
 			replica_conn=self.global_config.conndic[connection]
 			my_conn=replica_conn["mysql_conn"]
 			pg_conn=replica_conn["pg_conn"]
-			print("Replica ===> %s" % (connection, ))
-			print("======== MySQL ========")
-			print("Host %(host)s  - port: %(port)s - Schema: %(my_database)s" % (my_conn))
-			print("======== PostgreSQL ========")
-			print("Host %(host)s  - port: %(port)s - Database: %(pg_database)s -  Destination Schema: %(destination_schema)s" % (pg_conn))
+			print("===> %s <===" % (connection, ))
+			print("MySQL ==> Host: %(host)s  - port: %(port)s - Schema: %(my_database)s" % (my_conn))
+			print("PostgreSQL ==> Host: %(host)s  - port: %(port)s - Database: %(pg_database)s -  Destination Schema: %(destination_schema)s" % (pg_conn))
 			print(" ")
 			
