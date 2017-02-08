@@ -35,10 +35,13 @@ class sql_token(object):
 		#re for query type
 		self.m_create_table=re.compile(r'(CREATE\s*TABLE)\s*(?:IF\s*NOT\s*EXISTS)?\s*(?:`)?(\w*)(?:`)?', re.IGNORECASE)
 		self.m_drop_table=re.compile(r'(DROP\s*TABLE)\s*(?:IF\s*EXISTS)?\s*(?:`)?(\w*)(?:`)?', re.IGNORECASE)
-		self.m_alter_table=re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+((?:ADD|DROP|CHANGE)\s+(?:COLUMN)?.*,?)', re.IGNORECASE)
-		self.m_alter_list=re.compile(r'((?:(?:ADD|DROP|CHANGE)\s+(?:COLUMN)?))(.*?,)', re.IGNORECASE)
+		self.m_alter_index=re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+((?:ADD|DROP)\s+(?:UNIQUE)?\s*?(?:INDEX).*,?)', re.IGNORECASE)
+		self.m_alter_table=re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+((?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?.*,?)', re.IGNORECASE)
+		self.m_alter_list=re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
 		self.m_alter_column=re.compile(r'\s*`?(\w*)`?\s*(\w*)\s*(?:\((.*?)\))?', re.IGNORECASE)
+		self.m_alter_change=re.compile(r'\s*`?(\w*)`?\s*`?(\w*)`?\s*(\w*)\s*(?:\((.*?)\))?', re.IGNORECASE)
 		self.m_drop_primary=re.compile(r'(?:(?:ALTER\s+?TABLE)\s+(`?\b.*?\b`?)\s+(DROP\s+PRIMARY\s+KEY))', re.IGNORECASE)
+		self.m_modify=re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
 		
 	def reset_lists(self):
 		self.tokenised=[]
@@ -47,8 +50,7 @@ class sql_token(object):
 	def parse_column(self, col_def):
 		colmatch=self.m_field.search(col_def)
 		dimmatch=self.m_dimension.search(col_def)
-		#enmatch=self.m_enum.search(col_def)
-		#print col_def
+		#print(col_def)
 		
 		col_dic={}
 		if colmatch:
@@ -158,15 +160,14 @@ class sql_token(object):
 		alter_list=self.m_alter_list.findall(alter_stat)
 		for alter_item in alter_list:
 			alter_dic={}
+			#print(alter_item)
 			command = (alter_item[0].split())[0].upper().strip()
 			if command == 'DROP':
 				alter_dic["command"] = command
 				alter_dic["name"] = alter_item[1].strip().strip(',').replace('`', '').strip()
-
 			elif command == 'ADD':
 				alter_column=self.m_alter_column.search(alter_item[1].strip())
 				if alter_column:
-					
 					alter_dic["command"] = command
 					alter_dic["name"] = alter_column.group(1).strip().strip('`')
 					alter_dic["type"] = alter_column.group(2).lower()
@@ -177,10 +178,27 @@ class sql_token(object):
 					#print alter_column.groups()
 			elif command == 'CHANGE':
 				alter_dic["command"] = command
-				change_lst=alter_item[1].strip(',').strip().split()
-				alter_dic["old"] = change_lst[0]
-				alter_dic["new"] = change_lst[1]
-				alter_dic["type"] = change_lst[2]
+				alter_column=self.m_alter_change.search(alter_item[1].strip())
+				if alter_column:
+					alter_dic["command"] = command
+					alter_dic["old"] = alter_column.group(1).strip().strip('`')
+					alter_dic["new"] = alter_column.group(2).strip().strip('`')
+					alter_dic["type"] = alter_column.group(3).strip().strip('`')
+					try:
+						alter_dic["dimension"]=alter_column.group(4).replace('|', ',').strip()
+					except:
+						alter_dic["dimension"]=0
+				
+			elif command == 'MODIFY':
+				alter_column=self.m_alter_column.search(alter_item[1].strip())
+				if alter_column:
+					alter_dic["command"] = command
+					alter_dic["name"] = alter_column.group(1).strip().strip('`')
+					alter_dic["type"] = alter_column.group(2).lower()
+					try:
+						alter_dic["dimension"]=alter_column.group(3).replace('|', ',').strip()
+					except:
+						alter_dic["dimension"]=0
 			alter_cmd.append(alter_dic)
 			stat_dic["alter_cmd"]=alter_cmd
 		return stat_dic
@@ -209,6 +227,7 @@ class sql_token(object):
 			mcreate_table=self.m_create_table.match(stat_cleanup)
 			mdrop_table=self.m_drop_table.match(stat_cleanup)
 			malter_table=self.m_alter_table.match(stat_cleanup)
+			malter_index=self.m_alter_index.match(stat_cleanup)
 			mdrop_primary=self.m_drop_primary.match(stat_cleanup)
 			
 			#print stat_cleanup
@@ -226,6 +245,8 @@ class sql_token(object):
 			elif mdrop_primary:
 				stat_dic["command"]="DROP PRIMARY KEY"
 				stat_dic["name"]=mdrop_primary.group(1).strip().strip(',').replace('`', '').strip()
+			elif malter_index:
+				pass
 			elif malter_table:
 				stat_dic=self.parse_alter_table(malter_table)
 			

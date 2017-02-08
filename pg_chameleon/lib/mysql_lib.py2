@@ -52,11 +52,15 @@ class mysql_connection(object):
 		self.my_cursor_fallback=self.my_connection.cursor()
 	
 	def disconnect_db(self):
-		self.my_connection.close()
-	
+		try:
+			self.my_connection.close()
+		except:
+			pass
 	def disconnect_db_ubf(self):
-		self.my_connection_ubf.close()
-		
+		try:
+			self.my_connection_ubf.close()
+		except:
+			pass
 		
 class mysql_engine(object):
 	def __init__(self, global_config, logger, out_dir="/tmp/"):
@@ -89,6 +93,7 @@ class mysql_engine(object):
 		Stream the replica using the batch data.
 		:param batch_data: The list with the master's batch data.
 		"""
+		schema_name=pg_engine.dest_schema
 		close_batch=False
 		total_events=0
 		table_type_map=self.get_table_type_map()	
@@ -110,7 +115,7 @@ class mysql_engine(object):
 		self.logger.debug("log_file %s, log_position %s. id_batch: %s " % (log_file, log_position, id_batch))
 		for binlogevent in my_stream:
 			total_events+=1
-			self.logger.debug("log_file %s, log_position %s. id_batch: %s replica_batch_size:%s total_events:%s " % (log_file, log_position, id_batch, self.replica_batch_size, total_events))
+			#self.logger.debug("log_file %s, log_position %s. id_batch: %s replica_batch_size:%s total_events:%s " % (log_file, log_position, id_batch, self.replica_batch_size, total_events))
 			if isinstance(binlogevent, RotateEvent):
 				binlogfile=binlogevent.next_binlog
 				position=binlogevent.position
@@ -134,7 +139,7 @@ class mysql_engine(object):
 				
 				for token in self.sql_token.tokenised:
 					if len(token)>0:
-						schema_name=binlogevent.schema.decode()
+						#schema_name=binlogevent.schema.decode()
 						
 						query_data={
 												"binlog":log_file, 
@@ -158,7 +163,7 @@ class mysql_engine(object):
 					log_file=binlogfile
 					log_position=binlogevent.packet.log_pos
 					table_name=binlogevent.table
-					schema_name=binlogevent.schema
+					#schema_name=binlogevent.schema
 
 					column_map=table_type_map[table_name]
 					global_data={
@@ -187,7 +192,7 @@ class mysql_engine(object):
 							event_data[column_name]=binascii.hexlify(event_data[column_name])
 					event_insert={"global_data":global_data,"event_data":event_data,  "event_update":event_update}
 					group_insert.append(event_insert)
-					self.logger.debug("Action: %s Total events: %s " % (global_data["action"],  total_events))
+					#self.logger.debug("Action: %s Total events: %s " % (global_data["action"],  total_events))
 					master_data["File"]=log_file
 					master_data["Position"]=log_position
 					if total_events>=self.replica_batch_size:
@@ -352,7 +357,7 @@ class mysql_engine(object):
 		return index_data
 	
 	def get_table_metadata(self):
-		self.logger.info("getting table metadata")
+		self.logger.debug("getting table metadata")
 		table_include=""
 		if self.mysql_con.tables_limit:
 			self.logger.info("table copy limited to tables: %s" % ','.join(self.mysql_con.tables_limit))
