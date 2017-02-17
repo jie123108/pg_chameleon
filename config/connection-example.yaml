@@ -9,7 +9,7 @@ replica1:
       my_server_id: 100
       my_database:  db_replica
       my_charset: 'utf8'
-      tables_limit:
+
 
   #postgres connection
   pg_conn:
@@ -19,4 +19,9 @@ replica1:
       password: never_commit_passwords
       pg_database: db_replication
       pg_charset: 'utf8'
-      destination_schema:
+      destination_schema: sch_replica
+
+  tables_limit:
+  replica_batch_size: 1000
+  copy_max_memory: 300M
+  copy_mode: 'file'

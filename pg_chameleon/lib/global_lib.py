@@ -17,88 +17,93 @@ class global_config(object):
 		
 	
 	"""
-	def __init__(self, load_config=False, config_file='config/config.yaml', connection_file='config/connection.yaml'):
+	def __init__(self, connection_file, load_config=False):
 		"""
 			Class  constructor.
 		"""
-		self.config_file=config_file
-		self.connection_file=connection_file
-		if load_config:
-			self.load_config()
+		if connection_file:
+			self.connection_file = connection_file
+			if load_config:
+				self.load_config()
+		else:
+			print("**FATAL - invalid connection file specified **\Expected filename got %s." % (self.connection_file))
+			sys.exit(1)
 	
-	def load_config(self):
-		""" 
-		"""
-		if not os.path.isfile(self.config_file):
-				print("**FATAL - configuration file missing **\ncopy config/config-example.yaml to %s and set your configuration settings." % (self.config_file))
-				sys.exit()
-		
-		if not os.path.isfile(self.connection_file):
-			print("**FATAL - connection file missing **\ncopy config/connection-example.yaml to %s and set your connection settings." % (self.connection_file))
-			sys.exit()
-		configfile=open(self.config_file, 'r')
-		confdic=yaml.load(configfile.read())
-		configfile.close()
-		
-		connectfile=open(self.connection_file, 'r')
-		self.conndic=yaml.load(connectfile.read())
-		connectfile.close()
-		
+	def set_conn_vars(self, conndic):
 		try:
-			self.replica_batch_size=confdic["replica_batch_size"]
-			self.tables_limit=confdic["tables_limit"]
-			self.copy_mode=confdic["copy_mode"]
-			self.hexify=confdic["hexify"]
-			self.log_level=confdic["log_level"]
-			self.log_dest=confdic["log_dest"]
-			self.sleep_loop=confdic["sleep_loop"]
-			self.pause_on_reindex=confdic["pause_on_reindex"]
-			self.sleep_on_reindex=confdic["sleep_on_reindex"]
-			self.reindex_app_names=confdic["reindex_app_names"]
+			self.replica_batch_size = conndic["replica_batch_size"]
+			self.tables_limit = conndic["tables_limit"]
+			self.copy_mode = conndic["copy_mode"]
+			self.hexify = conndic["hexify"]
+			self.log_level = conndic["log_level"]
+			self.log_dest = conndic["log_dest"]
+			self.sleep_loop = conndic["sleep_loop"]
+			self.pause_on_reindex = conndic["pause_on_reindex"]
+			self.sleep_on_reindex = conndic["sleep_on_reindex"]
+			self.reindex_app_names = conndic["reindex_app_names"]
 			
 			
-			self.log_file=confdic["log_dir"]+"/replica.log"
-			copy_max_memory=str(confdic["copy_max_memory"])[:-1]
-			copy_scale=str(confdic["copy_max_memory"])[-1]
+			self.log_file = conndic["log_dir"]+"/replica.log"
+			copy_max_memory = str(conndic["copy_max_memory"])[:-1]
+			copy_scale=str(conndic["copy_max_memory"])[-1]
 			try:
 				int(copy_scale)
-				copy_max_memory=confdic["copy_max_memory"]
+				copy_max_memory = conndic["copy_max_memory"]
 			except:
-				if copy_scale=='k':
-					copy_max_memory=str(int(copy_max_memory)*1024)
-				elif copy_scale=='M':
-					copy_max_memory=str(int(copy_max_memory)*1024*1024)
-				elif copy_scale=='G':
-					copy_max_memory=str(int(copy_max_memory)*1024*1024*1024)
+				if copy_scale =='k':
+					copy_max_memory = str(int(copy_max_memory)*1024)
+				elif copy_scale =='M':
+					copy_max_memory = str(int(copy_max_memory)*1024*1024)
+				elif copy_scale =='G':
+					copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
 				else:
 					print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
 					sys.exit()
-			self.copy_max_memory=copy_max_memory
+			self.copy_max_memory = copy_max_memory
 		except KeyError as key_missing:
 			print('Missing key %s in configuration file. check config/config-example.yaml for reference' % (key_missing, ))
 			sys.exit()
 		
+	
+	def load_connection(self):
+		""" 
+		"""
+		
+		if not os.path.isfile(self.connection_file):
+			print("**FATAL - connection file missing **\ncopy config/connection-example.yaml to %s and set your connection settings." % (self.connection_file))
+			sys.exit()
+		
+		connectfile = open(self.connection_file, 'r')
+		self.connection = yaml.load(connectfile.read())
+		connectfile.close()
+		
+		
 
 class replica_engine(object):
-	def __init__(self):
-		self.global_config=global_config()
+	def __init__(self, conn_file):
+		self.global_config = global_config(conn_file)
 	
 	def create_service_schema(self):
 		print("ok")
 	
-	def init_replica(self, replica_key):
-		if replica_key == "":
-			print("**FATAL - You should specify the replica to initialise.")
-			sys.exit()
-
-	def list_replica(self):
-		self.global_config.load_config()
-		for connection in self.global_config.conndic:
-			replica_conn=self.global_config.conndic[connection]
-			my_conn=replica_conn["mysql_conn"]
-			pg_conn=replica_conn["pg_conn"]
-			print("===> %s <===" % (connection, ))
-			print("MySQL ==> Host: %(host)s  - port: %(port)s - Schema: %(my_database)s" % (my_conn))
-			print("PostgreSQL ==> Host: %(host)s  - port: %(port)s - Database: %(pg_database)s -  Destination Schema: %(destination_schema)s" % (pg_conn))
-			print(" ")
+	def list_connections(self):
+		self.global_config.load_connection()
+		print ("Connection key\t\tSource\t\tDestination\tType" )
+		print ("==================================================================" )
 			
+		for connkey in self.global_config.connection:
+			conndic = self.global_config.connection[connkey]
+			print ("%s\t%s\t%s\t%s" % (connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]))
+	
+	def show_connection(self, connkey):
+		if connkey == 'all':
+			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
+			sys.exit()
+		self.global_config.load_connection()
+		try:
+			conndic = self.global_config.connection[connkey]
+		except KeyError as key_missing:
+			print("**FATAL - wrong connection key specified." )
+			self.list_connections()
+			sys.exit(2)
+		self.global_config.set_conn_vars(conndic)
