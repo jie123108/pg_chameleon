@@ -61,8 +61,8 @@ class global_config(object):
 					sys.exit()
 			self.copy_max_memory = copy_max_memory
 		except KeyError as key_missing:
-			print('Missing key %s in configuration file. check config/config-example.yaml for reference' % (key_missing, ))
-			sys.exit()
+			print('Using global value for key %s ' % (key_missing, ))
+		
 		
 	
 	def load_connection(self):
@@ -76,6 +76,40 @@ class global_config(object):
 		connectfile = open(self.connection_file, 'r')
 		self.connection = yaml.load(connectfile.read())
 		connectfile.close()
+		conndic = self.connection
+		try:
+			self.replica_batch_size = conndic["replica_batch_size"]
+			#self.tables_limit = conndic["tables_limit"]
+			self.copy_mode = conndic["copy_mode"]
+			self.hexify = conndic["hexify"]
+			self.log_level = conndic["log_level"]
+			self.log_dest = conndic["log_dest"]
+			self.sleep_loop = conndic["sleep_loop"]
+			self.pause_on_reindex = conndic["pause_on_reindex"]
+			self.sleep_on_reindex = conndic["sleep_on_reindex"]
+			self.reindex_app_names = conndic["reindex_app_names"]
+			
+			
+			self.log_file = conndic["log_dir"]+"/replica.log"
+			copy_max_memory = str(conndic["copy_max_memory"])[:-1]
+			copy_scale=str(conndic["copy_max_memory"])[-1]
+			try:
+				int(copy_scale)
+				copy_max_memory = conndic["copy_max_memory"]
+			except:
+				if copy_scale =='k':
+					copy_max_memory = str(int(copy_max_memory)*1024)
+				elif copy_scale =='M':
+					copy_max_memory = str(int(copy_max_memory)*1024*1024)
+				elif copy_scale =='G':
+					copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
+				else:
+					print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
+					sys.exit()
+			self.copy_max_memory = copy_max_memory
+		except KeyError as key_missing:
+			print('Missing key %s in configuration file. check config/config-example.yaml for reference' % (key_missing, ))
+			sys.exit()
 		
 		
 
