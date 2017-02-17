@@ -30,25 +30,24 @@ reindex_app_names:
     - 'reindexdb'
     - 'my_custom_reindex'
 
-replica1:
-  mysql_conn:
-      host: localhost
-      port: 3306
-      user: replication_username
-      passwd: never_commit_passwords
-      my_server_id: 100
-      my_database:  db_replica
-      my_charset: 'utf8'
+connections:
+    replica1:
+        src_conn:
+            host: localhost
+            port: 3306
+            user: replication_username
+            passwd: never_commit_passwords
+            my_server_id: 100
+            my_database:  db_replica
+            my_charset: 'utf8'
+            type: 'mysql'
+        dest_conn:
+            host: localhost
+            port: 5432
+            user: replication_username
+            password: never_commit_passwords
+            pg_database: db_replication
+            pg_charset: 'utf8'
+            destination_schema: sch_replica
 
 
-  #postgres connection
-  pg_conn:
-      host: localhost
-      port: 5432
-      user: replication_username
-      password: never_commit_passwords
-      pg_database: db_replication
-      pg_charset: 'utf8'
-      destination_schema: sch_replica
-
-  

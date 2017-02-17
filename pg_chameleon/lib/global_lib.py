@@ -124,9 +124,9 @@ class replica_engine(object):
 		self.global_config.load_connection()
 		print ("Connection key\t\tSource\t\tDestination\tType" )
 		print ("==================================================================" )
-			
-		for connkey in self.global_config.connection:
-			conndic = self.global_config.connection[connkey]
+		self.conn_list=self.global_config.connection["connections"]
+		for connkey in self.conn_list:
+			conndic = self.conn_list[connkey]
 			print ("%s\t%s\t%s\t%s" % (connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]))
 	
 	def show_connection(self, connkey):
