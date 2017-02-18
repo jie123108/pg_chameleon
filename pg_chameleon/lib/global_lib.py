@@ -135,7 +135,7 @@ class replica_engine(object):
 			sys.exit()
 		self.global_config.load_connection()
 		try:
-			conndic = self.global_config.connection[connkey]
+			conndic = self.global_config.connection["connections"][connkey]
 		except KeyError as key_missing:
 			print("**FATAL - wrong connection key specified." )
 			self.list_connections()
