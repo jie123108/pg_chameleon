@@ -2,6 +2,7 @@ import yaml
 import sys
 import os
 import time
+from tabulate import tabulate
 import logging
 import smtplib
 from datetime import datetime
@@ -122,13 +123,17 @@ class replica_engine(object):
 	
 	def list_connections(self):
 		self.global_config.load_connection()
-		print ("Connection key\t\tSource\t\tDestination\tType" )
-		print ("==================================================================" )
+		tab_headers=["Connection key", "Source host", "Destination host", "Replica type"]
+		tab_body=[]
+		#print ("Connection key\t\tSource\t\tDestination\tType" )
+		#print ("==================================================================" )
 		self.conn_list=self.global_config.connection["connections"]
 		for connkey in self.conn_list:
 			conndic = self.conn_list[connkey]
-			print ("%s\t%s\t%s\t%s" % (connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]))
-	
+			tab_row=[connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]]
+			tab_body.append(tab_row)
+			#print ("%s\t%s\t%s\t%s" % (connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]))
+		print(tabulate(tab_body, headers=tab_headers))
 	def show_connection(self, connkey):
 		if connkey == 'all':
 			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
