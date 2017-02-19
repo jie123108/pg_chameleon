@@ -30,39 +30,33 @@ class global_config(object):
 			print("**FATAL - invalid connection file specified **\Expected filename got %s." % (self.connection_file))
 			sys.exit(1)
 	
-	def set_conn_vars(self, conndic):
+	def set_copy_max_memory(self):
+		copy_max_memory = str(self.copy_max_memory )[:-1]
+		copy_scale=str(self.copy_max_memory )[-1]
 		try:
-			self.replica_batch_size = conndic["replica_batch_size"]
-			self.tables_limit = conndic["tables_limit"]
-			self.copy_mode = conndic["copy_mode"]
-			self.hexify = conndic["hexify"]
-			self.log_level = conndic["log_level"]
-			self.log_dest = conndic["log_dest"]
-			self.sleep_loop = conndic["sleep_loop"]
-			self.pause_on_reindex = conndic["pause_on_reindex"]
-			self.sleep_on_reindex = conndic["sleep_on_reindex"]
-			self.reindex_app_names = conndic["reindex_app_names"]
-			
-			
-			self.log_file = conndic["log_dir"]+"/replica.log"
-			copy_max_memory = str(conndic["copy_max_memory"])[:-1]
-			copy_scale=str(conndic["copy_max_memory"])[-1]
+			int(copy_scale)
+			copy_max_memory = self.copy_max_memory 
+		except:
+			if copy_scale =='k':
+				copy_max_memory = str(int(copy_max_memory)*1024)
+			elif copy_scale =='M':
+				copy_max_memory = str(int(copy_max_memory)*1024*1024)
+			elif copy_scale =='G':
+				copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
+			else:
+				print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
+				sys.exit()
+		self.copy_max_memory = copy_max_memory
+	
+	
+	def set_conn_vars(self, conndic):
+		for key in conndic:
 			try:
-				int(copy_scale)
-				copy_max_memory = conndic["copy_max_memory"]
-			except:
-				if copy_scale =='k':
-					copy_max_memory = str(int(copy_max_memory)*1024)
-				elif copy_scale =='M':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024)
-				elif copy_scale =='G':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
-				else:
-					print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
-					sys.exit()
-			self.copy_max_memory = copy_max_memory
-		except KeyError as key_missing:
-			print('Using global value for key %s ' % (key_missing, ))
+				setattr(self, key, conndic[key])
+				print (key)
+			except KeyError as key_missing:
+				print('Using global value for key %s ' % (key_missing, ))
+		self.set_copy_max_memory()	
 		
 		
 	
@@ -78,39 +72,11 @@ class global_config(object):
 		self.connection = yaml.load(connectfile.read())
 		connectfile.close()
 		conndic = self.connection
-		try:
-			self.replica_batch_size = conndic["replica_batch_size"]
-			#self.tables_limit = conndic["tables_limit"]
-			self.copy_mode = conndic["copy_mode"]
-			self.hexify = conndic["hexify"]
-			self.log_level = conndic["log_level"]
-			self.log_dest = conndic["log_dest"]
-			self.sleep_loop = conndic["sleep_loop"]
-			self.pause_on_reindex = conndic["pause_on_reindex"]
-			self.sleep_on_reindex = conndic["sleep_on_reindex"]
-			self.reindex_app_names = conndic["reindex_app_names"]
-			
-			
-			self.log_file = conndic["log_dir"]+"/replica.log"
-			copy_max_memory = str(conndic["copy_max_memory"])[:-1]
-			copy_scale=str(conndic["copy_max_memory"])[-1]
-			try:
-				int(copy_scale)
-				copy_max_memory = conndic["copy_max_memory"]
-			except:
-				if copy_scale =='k':
-					copy_max_memory = str(int(copy_max_memory)*1024)
-				elif copy_scale =='M':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024)
-				elif copy_scale =='G':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
-				else:
-					print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
-					sys.exit()
-			self.copy_max_memory = copy_max_memory
-		except KeyError as key_missing:
-			print('Missing key %s in configuration file. check config/config-example.yaml for reference' % (key_missing, ))
-			sys.exit()
+		for key in conndic:
+			setattr(self, key, conndic[key])
+		self.set_copy_max_memory()	
+		self.log_file =  "%s/%s.log" % (self.log_dir, key)
+		
 		
 		
 
@@ -125,15 +91,13 @@ class replica_engine(object):
 		self.global_config.load_connection()
 		tab_headers=["Connection key", "Source host", "Destination host", "Replica type"]
 		tab_body=[]
-		#print ("Connection key\t\tSource\t\tDestination\tType" )
-		#print ("==================================================================" )
 		self.conn_list=self.global_config.connection["connections"]
 		for connkey in self.conn_list:
 			conndic = self.conn_list[connkey]
 			tab_row=[connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]]
 			tab_body.append(tab_row)
-			#print ("%s\t%s\t%s\t%s" % (connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]))
 		print(tabulate(tab_body, headers=tab_headers))
+	
 	def show_connection(self, connkey):
 		if connkey == 'all':
 			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
@@ -146,3 +110,4 @@ class replica_engine(object):
 			self.list_connections()
 			sys.exit(2)
 		self.global_config.set_conn_vars(conndic)
+		
