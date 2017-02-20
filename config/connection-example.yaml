@@ -35,22 +35,20 @@ connections:
     src_conn:
         host: localhost
         port: 3306
-        user: replication_username
+        user: usr_replica
         passwd: never_commit_passwords
-        my_server_id: 100
-        my_database:  db_replica
+        replica_slot: 100
+        replica_database:  db_replica
+        src_schema: #same as replica_database if type mysql
         my_charset: 'utf8'
         type: 'mysql'
 
-
-    #postgres connection
     dest_conn:
-        host: localhost
+        host: construct
         port: 5432
-        user: replication_username
+        user: usr_replica
         password: never_commit_passwords
         pg_database: db_replication
         pg_charset: 'utf8'
         destination_schema: sch_replica
-
     

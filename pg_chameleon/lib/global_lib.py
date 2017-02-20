@@ -1,11 +1,9 @@
 import yaml
 import sys
 import os
-import time
 from tabulate import tabulate
 import logging
-import smtplib
-from datetime import datetime
+from pg_chameleon import pg_engine
 
 class global_config(object):
 	"""
@@ -29,13 +27,15 @@ class global_config(object):
 		else:
 			print("**FATAL - invalid connection file specified **\Expected filename got %s." % (self.connection_file))
 			sys.exit(1)
+		self.lst_skip=["src_conn", "dest_conn", "connections"]
+		self.conn_pars={}
 	
 	def set_copy_max_memory(self):
-		copy_max_memory = str(self.copy_max_memory )[:-1]
-		copy_scale=str(self.copy_max_memory )[-1]
+		copy_max_memory = str(self.conn_pars["copy_max_memory"])[:-1]
+		copy_scale=str(self.conn_pars["copy_max_memory"] )[-1]
 		try:
 			int(copy_scale)
-			copy_max_memory = self.copy_max_memory 
+			copy_max_memory = self.conn_pars["copy_max_memory"]
 		except:
 			if copy_scale =='k':
 				copy_max_memory = str(int(copy_max_memory)*1024)
@@ -46,16 +46,15 @@ class global_config(object):
 			else:
 				print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
 				sys.exit()
-		self.copy_max_memory = copy_max_memory
+		self.conn_pars["copy_max_memory"] = copy_max_memory
 	
 	
 	def set_conn_vars(self, conndic):
+		self.conn_pars["connections"] = None
 		for key in conndic:
-			try:
-				setattr(self, key, conndic[key])
-				print (key)
-			except KeyError as key_missing:
-				print('Using global value for key %s ' % (key_missing, ))
+			self.conn_pars[key] = conndic[key]
+			if key not in self.lst_skip:
+				print('Override value key %s to %s' % (key, conndic[key]))
 		self.set_copy_max_memory()	
 		
 		
@@ -73,9 +72,9 @@ class global_config(object):
 		connectfile.close()
 		conndic = self.connection
 		for key in conndic:
-			setattr(self, key, conndic[key])
+			self.conn_pars[key] = conndic[key]
 		self.set_copy_max_memory()	
-		self.log_file =  "%s/%s.log" % (self.log_dir, key)
+
 		
 		
 		
@@ -83,9 +82,10 @@ class global_config(object):
 class replica_engine(object):
 	def __init__(self, conn_file):
 		self.global_config = global_config(conn_file)
-	
+		self.pg_eng=pg_engine()
+		
 	def create_service_schema(self):
-		print("ok")
+		self.pg_eng.create_service_schema()
 	
 	def list_connections(self):
 		self.global_config.load_connection()
@@ -99,15 +99,23 @@ class replica_engine(object):
 		print(tabulate(tab_body, headers=tab_headers))
 	
 	def show_connection(self, connkey):
+		tab_body=[]
 		if connkey == 'all':
 			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
 			sys.exit()
 		self.global_config.load_connection()
 		try:
 			conndic = self.global_config.connection["connections"][connkey]
-		except KeyError as key_missing:
+		except KeyError:
 			print("**FATAL - wrong connection key specified." )
 			self.list_connections()
 			sys.exit(2)
 		self.global_config.set_conn_vars(conndic)
+		tab_headers=["Parameter", "Value"]
+		for conn_par in self.global_config.conn_pars:
+			if conn_par not in self.global_config.lst_skip:
+				tab_row=[conn_par, self.global_config.conn_pars[conn_par]]
+				tab_body.append(tab_row)
+		print(tabulate(tab_body, headers=tab_headers))
+			
 		
