@@ -47,4 +47,5 @@ class pg_engine(object):
 						'json':'text'
 					}
 	def create_service_schema(self):
+		time.sleep(30)
 		print ("schema created")
