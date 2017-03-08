@@ -28,20 +28,25 @@ sql_up_dir = "%s/%s" % (cham_dir, sql_up_path)
 
 
 data_files = []
-conf_files = (conf_dir, ['config/config-example.yaml'])
+conn_files = (conn_dir, ['connection/connection-example.yaml'])
 
 sql_src = ['sql/create_schema.sql', 'sql/drop_schema.sql']
 
-sql_upgrade = ["%s/%s" % (sql_up_path, file) for file in listdir(sql_up_path) if isfile(join(sql_up_path, file))]
 
 sql_files = (sql_dir,sql_src)
 sql_files = (sql_dir,sql_src)
-sql_up_files = (sql_up_dir,sql_upgrade)
 
 
-data_files.append(conf_files)
+
+data_files.append(conn_files)
 data_files.append(sql_files)
-data_files.append(sql_up_files)
+try:
+	sql_upgrade = ["%s/%s" % (sql_up_path, file) for file in listdir(sql_up_path) if isfile(join(sql_up_path, file))]
+	sql_up_files = (sql_up_dir,sql_upgrade)
+	data_files.append(sql_up_files)
+except:
+	pass
+	
 setup(
 	name="pg_chameleon",
 	version="v2.0-dev.1",
@@ -64,7 +69,6 @@ The tool can pull the data from a cascading replica when the MySQL slave is conf
 	classifiers=[
 		"License :: OSI Approved :: BSD License"
 	],
-	#packages=['pg_chameleon'],
 	py_modules=[
 		"pg_chameleon.__init__",
 		"pg_chameleon.lib.global_lib",

@@ -39,9 +39,9 @@ connections:
         passwd: never_commit_passwords
         replica_slot: 100
         replica_database:  db_replica
-        src_schema: #same as replica_database if type mysql
+        src_schema: #if type is mysql should be the database to replicate from
         my_charset: 'utf8'
-        type: 'mysql'
+        type: 'mysql' #currently only mysql is supported
 
     dest_conn:
         host: construct
