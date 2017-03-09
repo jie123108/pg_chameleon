@@ -13,7 +13,7 @@ config_help = 'Configuration key name. Should be present in connection file. If 
 
 parser = argparse.ArgumentParser(description='Command line for pg_chameleon.',  add_help=True)
 parser.add_argument('command', type=str, help=command_help)
-parser.add_argument('--connfile', type=str,  default='config/connection.yaml',  required=False, help=connection_help)
+parser.add_argument('--connfile', type=str,  default='connection.yaml',  required=False, help=connection_help)
 parser.add_argument('--connkey',  type=str,  default='all',  required=False, help=config_help)
 args = parser.parse_args()
 pid='/tmp/test.pid'
@@ -25,6 +25,6 @@ elif args.command == commands[1]:
 elif args.command == commands[2]:
 	#daemon = Daemonize(app="test_app", pid=pid, action=replica.create_service_schema, foreground=False)
 	#daemon.start()
-	replica.create_service_schema()
+	replica.create_service_schema(args.connkey)
 
 

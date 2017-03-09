@@ -14,6 +14,7 @@ class replica_logging(object):
 		"""
 			**kwargs: log_dest,log_level,log_file,log_append
 		"""
+		log_file='replica.log'
 		self.logger = logging.getLogger(__name__)
 		self.logger.setLevel(logging.DEBUG)
 		self.logger.propagate = False
@@ -27,7 +28,7 @@ class replica_logging(object):
 				file_mode='a'
 			else:
 				file_mode='w'
-			fh = logging.FileHandler(kwargs.log_file, file_mode)
+			fh = logging.FileHandler(log_file, file_mode)
 		
 		if kwargs.log_level=='debug':
 			fh.setLevel(logging.DEBUG)
@@ -54,8 +55,10 @@ class global_config(object):
 		"""
 			Class  constructor.
 		"""
+		local_conndir= "%s/.pg_chameleon/connection/" % os.path.expanduser('~')	
+		
 		if connection_file:
-			self.connection_file = connection_file
+			self.connection_file = '%s/%s'%(local_conndir, connection_file)
 			if load_config:
 				self.load_config()
 		else:
@@ -67,10 +70,9 @@ class global_config(object):
 		
 	def set_log_kwargs(self):
 		self.load_connection()
-		log_pars=['log_dest','log_level','log_file','log_append']
+		log_pars=['log_dest','log_level','log_append']
 		for par in log_pars:
 			self.log_kwargs[par]=[self.conn_pars[par]]
-		print (log_pars)
 	
 	def set_copy_max_memory(self):
 		copy_max_memory = str(self.conn_pars["copy_max_memory"])[:-1]
@@ -125,9 +127,13 @@ class replica_engine(object):
 		self.global_config = global_config(conn_file)
 		self.pg_eng=pg_engine()
 		
-	def create_service_schema(self):
-		self.global_config.set_log_kwargs()
-		self.pg_eng.create_service_schema()
+	def create_service_schema(self, connkey):
+		if connkey == 'all':
+			print('You should specify a connection key')
+			self.list_connections()
+		else:
+			self.global_config.set_log_kwargs()
+			self.pg_eng.create_service_schema()
 	
 	def list_connections(self):
 		self.global_config.load_connection()
