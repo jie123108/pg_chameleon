@@ -105,6 +105,7 @@ class global_config(object):
 			if key not in self.lst_skip:
 				print('Override value key %s to %s' % (key, self.currentconn[key]))
 		self.set_copy_max_memory()	
+		self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
 		
 		
 	
@@ -142,12 +143,12 @@ class replica_engine(object):
 			fh = replog.init_logger(**self.global_config.log_kwargs)
 			keep_fds = [fh.stream.fileno()]
 			self.global_config.set_conn_vars(connkey)
-			replog.logger.info(self.global_config.conn_pars)
-			pid='/tmp/test.pid'
-			self.pg_eng.connkey=connkey
+			pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], connkey)
+			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
-			daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=False, keep_fds=keep_fds)
-			daemon.start()
+			self.pg_eng.create_service_schema()
+			#daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=True, keep_fds=keep_fds)
+			#daemon.start()
 	
 			
 	
