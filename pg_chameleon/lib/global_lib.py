@@ -76,7 +76,9 @@ class global_config(object):
 		self.set_copy_max_memory()	
 
 		
-		
+class replica_logging(object):
+	def __init(self):
+		print('ok')
 		
 
 class replica_engine(object):
