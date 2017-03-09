@@ -23,8 +23,8 @@ if args.command == commands[0]:
 elif args.command == commands[1]:
 	replica.show_connection(args.connkey)
 elif args.command == commands[2]:
-	daemon = Daemonize(app="test_app", pid=pid, action=replica.create_service_schema, foreground=False)
-	daemon.start()
-	#replica.create_service_schema()
+	#daemon = Daemonize(app="test_app", pid=pid, action=replica.create_service_schema, foreground=False)
+	#daemon.start()
+	replica.create_service_schema()
 
 

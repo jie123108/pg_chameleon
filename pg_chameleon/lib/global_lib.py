@@ -5,6 +5,40 @@ from tabulate import tabulate
 import logging
 from pg_chameleon import pg_engine
 
+		
+class replica_logging(object):
+	def __init(self):
+		self.logger=None
+
+	def init_logger(self, **kwargs):
+		"""
+			**kwargs: log_dest,log_level,log_file,log_append
+		"""
+		self.logger = logging.getLogger(__name__)
+		self.logger.setLevel(logging.DEBUG)
+		self.logger.propagate = False
+		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s: %(message)s", "%b %e %H:%M:%S")
+		
+		if kwargs.log_dest=='stdout':
+			fh=logging.StreamHandler(sys.stdout)
+			
+		elif kwargs.log_dest=='file':
+			if kwargs.log_append:
+				file_mode='a'
+			else:
+				file_mode='w'
+			fh = logging.FileHandler(kwargs.log_file, file_mode)
+		
+		if kwargs.log_level=='debug':
+			fh.setLevel(logging.DEBUG)
+		elif kwargs.log_level=='info':
+			fh.setLevel(logging.INFO)
+			
+		fh.setFormatter(formatter)
+		self.logger.addHandler(fh)
+		return fh
+
+
 class global_config(object):
 	"""
 		This class parses the configuration file which defaults to config/config.yaml and the config/connection.yaml if not specified.
@@ -29,6 +63,14 @@ class global_config(object):
 			sys.exit(1)
 		self.lst_skip=["src_conn", "dest_conn", "connections"]
 		self.conn_pars={}
+		self.log_kwargs={}
+		
+	def set_log_kwargs(self):
+		self.load_connection()
+		log_pars=['log_dest','log_level','log_file','log_append']
+		for par in log_pars:
+			self.log_kwargs[par]=[self.conn_pars[par]]
+		print (log_pars)
 	
 	def set_copy_max_memory(self):
 		copy_max_memory = str(self.conn_pars["copy_max_memory"])[:-1]
@@ -74,11 +116,8 @@ class global_config(object):
 		for key in conndic:
 			self.conn_pars[key] = conndic[key]
 		self.set_copy_max_memory()	
-
 		
-class replica_logging(object):
-	def __init(self):
-		print('ok')
+
 		
 
 class replica_engine(object):
@@ -87,6 +126,7 @@ class replica_engine(object):
 		self.pg_eng=pg_engine()
 		
 	def create_service_schema(self):
+		self.global_config.set_log_kwargs()
 		self.pg_eng.create_service_schema()
 	
 	def list_connections(self):
