@@ -14,7 +14,7 @@ pid_dir: '~/.pg_chameleon/pid/'
 log_dir: '~/.pg_chameleon/logs/'
 
 log_level: 'debug'
-log_dest: 'stdout'
+log_dest: 'file'
 log_append: True
 #seconds between each replica loop
 sleep_loop: 10 

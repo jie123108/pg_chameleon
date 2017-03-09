@@ -5,6 +5,7 @@ import datetime
 import decimal
 import time
 import base64
+
 class pg_encoder(json.JSONEncoder):
 	def default(self, obj):
 		if isinstance(obj, datetime.time) or isinstance(obj, datetime.datetime) or  isinstance(obj, datetime.date) or isinstance(obj, decimal.Decimal):
@@ -49,5 +50,5 @@ class pg_engine(object):
 					
 					
 	def create_service_schema(self):
-		time.sleep(30)
-		print ("schema created")
+		time.sleep(10)
+		self.logger.info("schema created")

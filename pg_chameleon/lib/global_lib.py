@@ -4,35 +4,37 @@ import os
 from tabulate import tabulate
 import logging
 from pg_chameleon import pg_engine
-
+from daemonize import Daemonize
+	
 		
 class replica_logging(object):
 	def __init(self):
 		self.logger=None
 
-	def init_logger(self, **kwargs):
+	def init_logger(self, log_dest,log_level,log_append, log_dir, connkey):
 		"""
-			**kwargs: log_dest,log_level,log_file,log_append
+			
 		"""
-		log_file='replica.log'
+		log_file= '%s/%s.log' % (log_dir,connkey)
+		log_file = os.path.expanduser(log_file)
 		self.logger = logging.getLogger(__name__)
 		self.logger.setLevel(logging.DEBUG)
 		self.logger.propagate = False
 		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s: %(message)s", "%b %e %H:%M:%S")
 		
-		if kwargs.log_dest=='stdout':
+		if log_dest=='stdout':
 			fh=logging.StreamHandler(sys.stdout)
 			
-		elif kwargs.log_dest=='file':
-			if kwargs.log_append:
+		elif log_dest=='file':
+			if log_append:
 				file_mode='a'
 			else:
 				file_mode='w'
 			fh = logging.FileHandler(log_file, file_mode)
 		
-		if kwargs.log_level=='debug':
+		if log_level=='debug':
 			fh.setLevel(logging.DEBUG)
-		elif kwargs.log_level=='info':
+		elif log_level=='info':
 			fh.setLevel(logging.INFO)
 			
 		fh.setFormatter(formatter)
@@ -68,11 +70,12 @@ class global_config(object):
 		self.conn_pars={}
 		self.log_kwargs={}
 		
-	def set_log_kwargs(self):
+	def set_log_kwargs(self, connkey = "all"):
 		self.load_connection()
-		log_pars=['log_dest','log_level','log_append']
+		log_pars = ['log_dest','log_level','log_append', 'log_dir']
 		for par in log_pars:
-			self.log_kwargs[par]=[self.conn_pars[par]]
+			self.log_kwargs[par] = self.conn_pars[par]
+		self.log_kwargs["connkey"] = connkey
 	
 	def set_copy_max_memory(self):
 		copy_max_memory = str(self.conn_pars["copy_max_memory"])[:-1]
@@ -93,12 +96,14 @@ class global_config(object):
 		self.conn_pars["copy_max_memory"] = copy_max_memory
 	
 	
-	def set_conn_vars(self, conndic):
+	def set_conn_vars(self, connkey):
+		
+		self.currentconn= self.connection["connections"][connkey]
 		self.conn_pars["connections"] = None
-		for key in conndic:
-			self.conn_pars[key] = conndic[key]
+		for key in self.currentconn:
+			self.conn_pars[key] = self.currentconn[key]
 			if key not in self.lst_skip:
-				print('Override value key %s to %s' % (key, conndic[key]))
+				print('Override value key %s to %s' % (key, self.currentconn[key]))
 		self.set_copy_max_memory()	
 		
 		
@@ -119,7 +124,6 @@ class global_config(object):
 			self.conn_pars[key] = conndic[key]
 		self.set_copy_max_memory()	
 		
-
 		
 
 class replica_engine(object):
@@ -132,8 +136,20 @@ class replica_engine(object):
 			print('You should specify a connection key')
 			self.list_connections()
 		else:
-			self.global_config.set_log_kwargs()
-			self.pg_eng.create_service_schema()
+			
+			self.global_config.set_log_kwargs(connkey)
+			replog = replica_logging()
+			fh = replog.init_logger(**self.global_config.log_kwargs)
+			keep_fds = [fh.stream.fileno()]
+			self.global_config.set_conn_vars(connkey)
+			replog.logger.info(self.global_config.conn_pars)
+			pid='/tmp/test.pid'
+			self.pg_eng.connkey=connkey
+			self.pg_eng.logger=replog.logger
+			daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=False, keep_fds=keep_fds)
+			daemon.start()
+	
+			
 	
 	def list_connections(self):
 		self.global_config.load_connection()
@@ -153,12 +169,12 @@ class replica_engine(object):
 			sys.exit()
 		self.global_config.load_connection()
 		try:
-			conndic = self.global_config.connection["connections"][connkey]
+			self.global_config.set_conn_vars(connkey)
 		except KeyError:
 			print("**FATAL - wrong connection key specified." )
 			self.list_connections()
 			sys.exit(2)
-		self.global_config.set_conn_vars(conndic)
+		
 		tab_headers=["Parameter", "Value"]
 		for conn_par in self.global_config.conn_pars:
 			if conn_par not in self.global_config.lst_skip:
