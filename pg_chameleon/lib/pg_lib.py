@@ -15,7 +15,7 @@ class pg_encoder(json.JSONEncoder):
 
 class pg_engine(object):
 	def __init__(self):
-		self.type_dictionary={
+		self.type_dictionary = {
 						'integer':'integer',
 						'mediumint':'bigint',
 						'tinyint':'integer',
@@ -53,7 +53,7 @@ class pg_engine(object):
 		strconn = "dbname=%(pg_database)s user=%(user)s host=%(host)s password=%(password)s port=%(port)s"  % dest_pars
 		self.pgsql_conn = psycopg2.connect(strconn)
 		self.pgsql_conn .set_client_encoding(dest_pars["pg_charset"])
-		self.pgsql_cur=self.pgsql_conn .cursor()
+		self.pgsql_cur = self.pgsql_conn .cursor()
 		self.logger.info("connection to dest database established")
 
 	def set_autocommit(self, mode):
@@ -64,10 +64,30 @@ class pg_engine(object):
 		self.pgsql_conn.close()
 	
 	
+	def check_service_schema(self):
+		sql_check="""
+					SELECT 
+						count(*)
+					FROM 
+						information_schema.schemata  
+					WHERE 
+						schema_name='sch_chameleon'
+			"""
+
+		self.pgsql_cur.execute(sql_check)
+		num_schema = self.pgsql_cur.fetchone()
+		return num_schema
+	
+	
 	def create_service_schema(self):
 		try:
 			self.connect_db()
 			self.set_autocommit(True)
-			self.logger.info("service schema created")
-		except:
-			self.logger.info("an error occurred when creating the service schema")
+			num_schema  = self.check_service_schema()
+			if num_schema[0] == 0:
+				self.logger.info("service schema created %s" % num_schema[0])
+			else:
+				self.logger.error("the service schema is already created." )
+		except Exception as e:
+			self.logger.error("an error occurred when creating the service schema")
+			self.logger.error(e)
