@@ -5,6 +5,7 @@ commands = [
 	'list_connections',
 	'show_connection', 
 	'create_service_schema',
+	'drop_service_schema', 
 	]
 command_help = 'Available commands, ' + ','.join(commands)
 connection_help = 'Specify the connection filename. If omitted defaults to config/connection.yaml'

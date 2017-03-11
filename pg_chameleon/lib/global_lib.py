@@ -142,16 +142,39 @@ class replica_engine(object):
 			
 			self.global_config.set_log_kwargs(args.connkey)
 			replog = replica_logging()
-			fh = replog.init_logger(**self.global_config.log_kwargs)
-			keep_fds = [fh.stream.fileno()]
+			self.global_config.log_kwargs["log_dest"] = "stdout"
+			replog.init_logger(**self.global_config.log_kwargs)
+			#keep_fds = [fh.stream.fileno()]
 			self.global_config.set_conn_vars(args.connkey)
-			pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
+			#pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
 			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
 			self.pg_eng.create_service_schema()
 			#daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=True, keep_fds=keep_fds)
 			#daemon.start()
 	
+	def drop_service_schema(self, args):
+		lst_yes= ['yes',  'Yes', 'y', 'Y']
+		if args.connkey == 'all':
+			print('You should specify a connection key')
+			self.list_connections(args)
+		else:
+			
+			self.global_config.set_log_kwargs(args.connkey)
+			replog = replica_logging()
+			self.global_config.log_kwargs["log_dest"] = "stdout"
+			replog.init_logger(**self.global_config.log_kwargs)
+			self.global_config.set_conn_vars(args.connkey)
+			self.pg_eng.conn_pars=self.global_config.conn_pars
+			self.pg_eng.logger=replog.logger
+			drp_msg = 'Dropping the service schema from %s will DESTROY any replica reference.\n Are you sure? YES/No\n'  % args.connkey
+			drop_sch = input(drp_msg)
+			if drop_sch == 'YES':
+				self.pg_eng.drop_service_schema()
+			elif drop_sch in  lst_yes:
+				print('Please type YES all uppercase to confirm')
+			sys.exit()
+			
 			
 	
 	def list_connections(self, args):

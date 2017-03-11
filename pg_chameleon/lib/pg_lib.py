@@ -88,7 +88,7 @@ class pg_engine(object):
 			self.set_autocommit(True)
 			num_schema  = self.check_service_schema()
 			if num_schema[0] == 0:
-				self.logger.info("Installing service schema")
+				self.logger.info("Installing the service schema")
 				file_schema=open(self.sql_dir+'/create_schema.sql', 'rb')
 				sql_schema=file_schema.read()
 				file_schema.close()
@@ -96,6 +96,24 @@ class pg_engine(object):
 				self.logger.info("service schema created " )
 			else:
 				self.logger.error("the service schema is already created." )
+		except Exception as e:
+			self.logger.error("an error occurred when creating the service schema")
+			self.logger.error(e)
+	
+	def drop_service_schema(self):
+		try:
+			self.connect_db()
+			self.set_autocommit(True)
+			num_schema  = self.check_service_schema()
+			if num_schema[0] > 0:
+				self.logger.info("Dropping the service schema")
+				file_schema=open(self.sql_dir+'/drop_schema.sql', 'rb')
+				sql_schema=file_schema.read()
+				file_schema.close()
+				self.pgsql_cur.execute(sql_schema)
+				self.logger.info("service schema removed " )
+			else:
+				self.logger.error("the service schema is already dropped." )
 		except Exception as e:
 			self.logger.error("an error occurred when creating the service schema")
 			self.logger.error(e)
