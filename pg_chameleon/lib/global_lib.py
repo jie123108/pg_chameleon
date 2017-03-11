@@ -167,8 +167,11 @@ class replica_engine(object):
 			self.global_config.set_conn_vars(args.connkey)
 			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
-			drp_msg = 'Dropping the service schema from %s will DESTROY any replica reference.\n Are you sure? YES/No\n'  % args.connkey
-			drop_sch = input(drp_msg)
+			if args.noprompt:
+				drop_sch = 'YES'
+			else:
+				drp_msg = 'Dropping the service schema from %s will DESTROY any replica reference.\n Are you sure? YES/No\n'  % args.connkey
+				drop_sch = input(drp_msg)
 			if drop_sch == 'YES':
 				self.pg_eng.drop_service_schema()
 			elif drop_sch in  lst_yes:
