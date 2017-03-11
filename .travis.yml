@@ -16,6 +16,8 @@ addons:
   
 before_script:
  - cp tests/test.yaml ~/.pg_chameleon/connection/
+ - psql -c "create user usr_test with password 'test';" -U postgres
+ - psql -c 'create database db_test with owner usr_test;' -U postgres
 
  # command to run tests
 script: tests/test_build.py
