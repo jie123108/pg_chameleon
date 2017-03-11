@@ -43,7 +43,7 @@ connections:
         type: 'mysql' #currently only mysql is supported
 
     dest_conn:
-        host: test
+        host: localhost
         port: 5432
         user: usr_test
         password: test

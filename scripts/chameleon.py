@@ -23,5 +23,6 @@ replica = replica_engine(args.connfile)
 
 try:
 	getattr(replica, args.command)(args)
-except Exception as e:
+except AttributeError as e:
 	print (e)
+	
