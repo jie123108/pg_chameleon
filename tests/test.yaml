@@ -30,24 +30,24 @@ reindex_app_names:
     - 'my_custom_reindex'
 
 connections:
-  replica1:
+  test:
     src_conn:
         host: localhost
         port: 3306
-        user: usr_replica
-        passwd: never_commit_passwords
+        user: usr_test
+        passwd: test
         replica_slot: 100
-        replica_database:  db_replica
+        replica_database:  db_test
         src_schema: #if type is mysql should be the database to replicate from
         my_charset: 'utf8'
         type: 'mysql' #currently only mysql is supported
 
     dest_conn:
-        host: construct
+        host: test
         port: 5432
-        user: usr_replica
-        password: never_commit_passwords
-        pg_database: db_replication
+        user: usr_test
+        password: test
+        pg_database: db_test
         pg_charset: 'utf8'
-        destination_schema: sch_replica
+        destination_schema: sch_test
     
