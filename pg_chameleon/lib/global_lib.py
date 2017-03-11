@@ -106,6 +106,7 @@ class global_config(object):
 				print('Override value key %s to %s' % (key, self.currentconn[key]))
 		self.set_copy_max_memory()	
 		self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
+		self.conn_pars["log_dir"] = os.path.expanduser(self.conn_pars["log_dir"])
 		
 		
 	
@@ -132,18 +133,19 @@ class replica_engine(object):
 		self.global_config = global_config(conn_file)
 		self.pg_eng=pg_engine()
 		
-	def create_service_schema(self, connkey):
-		if connkey == 'all':
+	def create_service_schema(self, args):
+		
+		if args.connkey == 'all':
 			print('You should specify a connection key')
-			self.list_connections()
+			self.list_connections(args)
 		else:
 			
-			self.global_config.set_log_kwargs(connkey)
+			self.global_config.set_log_kwargs(args.connkey)
 			replog = replica_logging()
 			fh = replog.init_logger(**self.global_config.log_kwargs)
 			keep_fds = [fh.stream.fileno()]
-			self.global_config.set_conn_vars(connkey)
-			pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], connkey)
+			self.global_config.set_conn_vars(args.connkey)
+			pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
 			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
 			self.pg_eng.create_service_schema()
@@ -152,7 +154,7 @@ class replica_engine(object):
 	
 			
 	
-	def list_connections(self):
+	def list_connections(self, args):
 		self.global_config.load_connection()
 		tab_headers=["Connection key", "Source host", "Destination host", "Replica type"]
 		tab_body=[]
@@ -163,14 +165,15 @@ class replica_engine(object):
 			tab_body.append(tab_row)
 		print(tabulate(tab_body, headers=tab_headers))
 	
-	def show_connection(self, connkey):
+	def show_connection(self, args):
 		tab_body=[]
-		if connkey == 'all':
+		if args.connkey == 'all':
 			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
+			self.list_connections(args)
 			sys.exit()
 		self.global_config.load_connection()
 		try:
-			self.global_config.set_conn_vars(connkey)
+			self.global_config.set_conn_vars(args.connkey)
 		except KeyError:
 			print("**FATAL - wrong connection key specified." )
 			self.list_connections()

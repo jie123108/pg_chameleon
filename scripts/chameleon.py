@@ -17,11 +17,8 @@ parser.add_argument('--connkey',  type=str,  default='all',  required=False, hel
 args = parser.parse_args()
 
 replica = replica_engine(args.connfile)
-if args.command == commands[0]:
-	replica.list_connections()
-elif args.command == commands[1]:
-	replica.show_connection(args.connkey)
-elif args.command == commands[2]:
-	replica.create_service_schema(args.connkey)
 
-
+try:
+	getattr(replica, args.command)(args)
+except Exception as e:
+	print (e)
