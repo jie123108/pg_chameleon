@@ -5,6 +5,7 @@ import datetime
 import decimal
 import time
 import base64
+import os
 
 class pg_encoder(json.JSONEncoder):
 	def default(self, obj):
@@ -15,6 +16,8 @@ class pg_encoder(json.JSONEncoder):
 
 class pg_engine(object):
 	def __init__(self):
+		self.sql_dir = "%s/.pg_chameleon/sql/" % os.path.expanduser('~')	
+		
 		self.type_dictionary = {
 						'integer':'integer',
 						'mediumint':'bigint',
@@ -85,7 +88,12 @@ class pg_engine(object):
 			self.set_autocommit(True)
 			num_schema  = self.check_service_schema()
 			if num_schema[0] == 0:
-				self.logger.info("service schema created %s" % num_schema[0])
+				self.logger.info("Installing service schema")
+				file_schema=open(self.sql_dir+'/create_schema.sql', 'rb')
+				sql_schema=file_schema.read()
+				file_schema.close()
+				self.pgsql_cur.execute(sql_schema)
+				self.logger.info("service schema created " )
 			else:
 				self.logger.error("the service schema is already created." )
 		except Exception as e:
