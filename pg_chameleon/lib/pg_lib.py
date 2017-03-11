@@ -86,11 +86,11 @@ class pg_engine(object):
 		try:
 			self.connect_db()
 			self.set_autocommit(True)
-			num_schema  = self.check_service_schema()
+			num_schema = self.check_service_schema()
 			if num_schema[0] == 0:
 				self.logger.info("Installing the service schema")
-				file_schema=open(self.sql_dir+'/create_schema.sql', 'rb')
-				sql_schema=file_schema.read()
+				file_schema = open(self.sql_dir+'/create_schema.sql', 'rb')
+				sql_schema = file_schema.read()
 				file_schema.close()
 				self.pgsql_cur.execute(sql_schema)
 				self.logger.info("service schema created " )
@@ -104,11 +104,11 @@ class pg_engine(object):
 		try:
 			self.connect_db()
 			self.set_autocommit(True)
-			num_schema  = self.check_service_schema()
+			num_schema = self.check_service_schema()
 			if num_schema[0] > 0:
 				self.logger.info("Dropping the service schema")
-				file_schema=open(self.sql_dir+'/drop_schema.sql', 'rb')
-				sql_schema=file_schema.read()
+				file_schema = open(self.sql_dir+'/drop_schema.sql', 'rb')
+				sql_schema = file_schema.read()
 				file_schema.close()
 				self.pgsql_cur.execute(sql_schema)
 				self.logger.info("service schema removed " )
@@ -117,3 +117,27 @@ class pg_engine(object):
 		except Exception as e:
 			self.logger.error("an error occurred when creating the service schema")
 			self.logger.error(e)
+			
+	def add_source(self, source_name, dest_schema):
+		sql_source = """
+					SELECT 
+						count(i_id_source)
+					FROM 
+						sch_chameleon.t_sources 
+					WHERE 
+						t_source=%s
+				;
+			"""
+		self.pg_conn.pgsql_cur.execute(sql_source, (source_name, ))
+		source_data = self.pg_conn.pgsql_cur.fetchone()
+		cnt_source = source_data[0]
+		if cnt_source == 0:
+			sql_add = """INSERT INTO sch_chameleon.t_sources 
+						( t_source,t_dest_schema) 
+					VALUES 
+						(%s,%s); """
+			self.pg_conn.pgsql_cur.execute(sql_add, (source_name, dest_schema ))
+		else:
+			print("Source %s already registered." % source_name)
+		sys.exit()
+	

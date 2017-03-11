@@ -7,12 +7,32 @@ CREATE OR REPLACE VIEW sch_chameleon.v_version
 ;
 
 
+CREATE TYPE sch_chameleon.en_rep_status
+	AS ENUM ('registered', 'initialising','initialised','stopped','running');
+
 CREATE TYPE sch_chameleon.en_binlog_event 
 	AS ENUM ('delete', 'update', 'insert','ddl');
+
+	
+CREATE TABLE sch_chameleon.t_replica
+(
+	i_id_replica	bigserial,
+	t_conn_key	text NOT NULL,
+	t_dest_schema   text NOT NULL,
+	enm_status sch_chameleon.en_rep_status NOT NULL DEFAULT 'registered',
+	ts_last_event timestamp without time zone,
+	CONSTRAINT pk_t_replica PRIMARY KEY (i_id_replica)
+)
+;
+
+CREATE UNIQUE INDEX idx_t_replica_t_conn_key ON sch_chameleon.t_replica(t_conn_key);
+CREATE UNIQUE INDEX idx_t_replica_t_dest_schema ON sch_chameleon.t_replica(t_dest_schema);
+
 
 CREATE TABLE sch_chameleon.t_replica_batch
 (
   i_id_batch bigserial NOT NULL,
+  i_id_replica bigint NOT NULL,
   t_binlog_name text,
   i_binlog_position integer,
   b_started boolean NOT NULL DEFAULT False,
@@ -32,10 +52,10 @@ WITH (
 );
 
 CREATE UNIQUE INDEX idx_t_replica_batch_binlog_name_position 
-	ON sch_chameleon.t_replica_batch (t_binlog_name,i_binlog_position);
+    ON sch_chameleon.t_replica_batch  (i_id_replica,t_binlog_name,i_binlog_position);
 
 CREATE UNIQUE INDEX idx_t_replica_batch_ts_created
-	ON sch_chameleon.t_replica_batch (ts_created);
+	ON sch_chameleon.t_replica_batch (i_id_replica,ts_created);
 
 CREATE TABLE IF NOT EXISTS sch_chameleon.t_log_replica
 (
@@ -82,6 +102,7 @@ INHERITS (sch_chameleon.t_log_replica)
 CREATE TABLE sch_chameleon.t_replica_tables
 (
   i_id_table bigserial NOT NULL,
+  i_id_replica bigint NOT NULL,
   v_table_name character varying(100) NOT NULL,
   v_schema_name character varying(100) NOT NULL,
   v_table_pkey character varying(100)[] NOT NULL,
@@ -92,10 +113,9 @@ WITH (
 );
 
 CREATE UNIQUE INDEX idx_t_replica_tables_table_schema
-	ON sch_chameleon.t_replica_tables (v_table_name,v_schema_name);
+	ON sch_chameleon.t_replica_tables (i_id_replica,v_table_name,v_schema_name);
 
 
-	
 CREATE TABLE sch_chameleon.t_discarded_rows
 (
 	i_id_row		bigserial,
@@ -107,25 +127,58 @@ CREATE TABLE sch_chameleon.t_discarded_rows
 ;
 	
 	
-CREATE OR REPLACE FUNCTION sch_chameleon.fn_process_batch(integer)
+ALTER TABLE sch_chameleon.t_replica_batch
+	ADD CONSTRAINT fk_t_replica_batch_i_id_replica FOREIGN KEY (i_id_replica)
+	REFERENCES sch_chameleon.t_replica (i_id_replica)
+	ON UPDATE RESTRICT ON DELETE CASCADE
+	;
+
+ALTER TABLE sch_chameleon.t_replica_tables
+	ADD CONSTRAINT fk_t_replica_tables_i_id_replica FOREIGN KEY (i_id_replica)
+	REFERENCES sch_chameleon.t_replica (i_id_replica)
+	ON UPDATE RESTRICT ON DELETE CASCADE
+	;
+
+
+
+CREATE TABLE sch_chameleon.t_index_def
+(
+  i_id_def bigserial NOT NULL,
+  i_id_replica bigint NOT NULL,
+  v_schema character varying(100),
+  v_table character varying(100),
+  v_index character varying(100),
+  t_create	text,
+  t_drop	text,
+  CONSTRAINT pk_t_index_def PRIMARY KEY (i_id_def)
+)
+WITH (
+  OIDS=FALSE
+);
+
+CREATE UNIQUE INDEX idx_schema_table_source ON sch_chameleon.t_index_def(i_id_replica,v_schema,v_table,v_index);
+	
+	
+CREATE OR REPLACE FUNCTION sch_chameleon.fn_process_batch(integer,integer)
 RETURNS BOOLEAN AS
 $BODY$
 	DECLARE
-	    p_max_events   ALIAS FOR $1;
-		v_r_rows	    record;
-		v_t_fields	    text[];
-		v_t_values	    text[];
-		v_t_sql_rep	    text;
-		v_t_pkey	    text;
-		v_t_vals	    text;
-		v_t_update	    text;
-		v_t_ins_fld	    text;
-		v_t_ins_val	    text;
-		v_t_ddl		    text;
-		v_b_loop	    boolean;
-		v_i_id_batch	integer;
-		v_i_replayed integer;
-		v_i_skipped integer;
+		p_i_max_events	ALIAS FOR $1;
+		p_i_id_replica		ALIAS FOR $2;
+		v_r_rows			record;
+		v_t_fields			text[];
+		v_t_values		text[];
+		v_t_sql_rep		text;
+		v_t_pkey			text;
+		v_t_vals			text;
+		v_t_update		text;
+		v_t_ins_fld		text;
+		v_t_ins_val		text;
+		v_t_ddl			text;
+		v_b_loop			boolean;
+		v_i_id_batch		integer;
+		v_i_replayed		integer;
+		v_i_skipped		integer;
 		
 	BEGIN
 	    v_b_loop:=True;
@@ -140,6 +193,7 @@ $BODY$
 								    b_started 
 							AND 	b_processed 
 							AND     NOT b_replayed
+							AND     i_id_replica=p_i_id_replica
 						ORDER BY 
 							ts_created 
 						LIMIT 1
@@ -163,12 +217,13 @@ $BODY$
 							INNER JOIN sch_chameleon.t_replica_tables tab
 								ON
 										tab.v_table_name=log.v_table_name
-									AND 	tab.v_schema_name=log.v_schema_name
+									AND tab.v_schema_name=log.v_schema_name
+									AND tab.i_id_replica=p_i_id_replica
 								INNER JOIN t_batch bat
 								ON	bat.i_id_batch=log.i_id_batch
 							
 						ORDER BY ts_event_datetime
-						LIMIT p_max_events
+						LIMIT p_i_max_events
 					)
 				SELECT
 				    i_id_event,
