@@ -117,27 +117,42 @@ class pg_engine(object):
 		except Exception as e:
 			self.logger.error("an error occurred when creating the service schema")
 			self.logger.error(e)
-			
-	def add_source(self, source_name, dest_schema):
+	
+	def drop_replica(self):
+		self.connect_db()
+		self.set_autocommit(True)
+		connkey = self.conn_pars["connkey"]	
+		sql_delete = """ DELETE FROM sch_chameleon.t_replica
+				WHERE  t_conn_key=%s; """
+		self.logger.info("removing replica %s from the replica catalogue" % connkey )
+		self.pgsql_cur.execute(sql_delete, (connkey, ))
+
+	def add_replica(self):
+		self.connect_db()
+		self.set_autocommit(True)
+		connkey = self.conn_pars["connkey"]	
+		dest_schema = self.conn_pars["dest_conn"]["destination_schema"]	
+		self.logger.info("checking if replica %s is already registered " % connkey )
 		sql_source = """
 					SELECT 
-						count(i_id_source)
+						count(i_id_replica)
 					FROM 
-						sch_chameleon.t_sources 
+						sch_chameleon.t_replica
 					WHERE 
-						t_source=%s
+						t_conn_key=%s
 				;
 			"""
-		self.pg_conn.pgsql_cur.execute(sql_source, (source_name, ))
-		source_data = self.pg_conn.pgsql_cur.fetchone()
-		cnt_source = source_data[0]
-		if cnt_source == 0:
-			sql_add = """INSERT INTO sch_chameleon.t_sources 
-						( t_source,t_dest_schema) 
+		self.pgsql_cur.execute(sql_source, (connkey, ))
+		rep_data = self.pgsql_cur.fetchone()
+		cnt_rep= rep_data [0]
+		if cnt_rep== 0:
+			self.logger.info("adding replica %s to the replica catalogue " % connkey )
+			sql_add = """INSERT INTO sch_chameleon.t_replica
+						( t_conn_key,t_dest_schema) 
 					VALUES 
 						(%s,%s); """
-			self.pg_conn.pgsql_cur.execute(sql_add, (source_name, dest_schema ))
+			self.pgsql_cur.execute(sql_add, (connkey, dest_schema ))
 		else:
-			print("Source %s already registered." % source_name)
-		sys.exit()
+			self.logger.error("replica %s is already registered " % connkey )
+			
 	

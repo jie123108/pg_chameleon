@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import argparse
+import argparse, sys
 from pg_chameleon import replica_engine
 commands = [
 	'list_connections',
@@ -25,6 +25,12 @@ replica = replica_engine(args.connfile)
 
 try:
 	getattr(replica, args.command)(args)
+	sys.exit()
 except AttributeError as e:
 	print (e)
-	
+except SystemExit:
+	pass
+except:
+	print ("Unexpected error:", sys.exc_info()[0])
+	raise
+

@@ -97,17 +97,22 @@ class global_config(object):
 	
 	
 	def set_conn_vars(self, connkey):
-		
-		self.currentconn= self.connection["connections"][connkey]
-		self.conn_pars["connections"] = None
-		for key in self.currentconn:
-			self.conn_pars[key] = self.currentconn[key]
-			if key not in self.lst_skip:
-				print('Override value key %s to %s' % (key, self.currentconn[key]))
-		self.set_copy_max_memory()	
-		self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
-		self.conn_pars["log_dir"] = os.path.expanduser(self.conn_pars["log_dir"])
-		
+		try:
+			self.currentconn= self.connection["connections"][connkey]
+			self.conn_pars["connections"] = None
+			for key in self.currentconn:
+				self.conn_pars[key] = self.currentconn[key]
+				if key not in self.lst_skip:
+					print('Override value key %s to %s' % (key, self.currentconn[key]))
+			self.set_copy_max_memory()	
+			self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
+			self.conn_pars["log_dir"] = os.path.expanduser(self.conn_pars["log_dir"])
+			self.conn_pars["connkey"] = connkey
+		except KeyError as e:
+			print("wrong connection key specified %s" % (e, ))
+			sys.exit(1)
+		except:
+			raise
 		
 	
 	def load_connection(self):
@@ -132,6 +137,7 @@ class replica_engine(object):
 	def __init__(self, conn_file):
 		self.global_config = global_config(conn_file)
 		self.pg_eng=pg_engine()
+		self.lst_yes= ['yes',  'Yes', 'y', 'Y']
 	
 	def init_logger(self, args, log_dest):
 		self.global_config.set_log_kwargs(args.connkey)
@@ -143,8 +149,28 @@ class replica_engine(object):
 	
 	def add_replica(self, args):
 		replog = self.init_logger(args, 'stdout')
+		self.global_config.set_conn_vars(args.connkey)
+		self.pg_eng.conn_pars=self.global_config.conn_pars
+		self.pg_eng.logger=replog.logger
+		self.pg_eng.add_replica()
+	def drop_replica(self, args):
+		replog = self.init_logger(args, 'stdout')
+		self.global_config.set_conn_vars(args.connkey)
+		self.pg_eng.conn_pars=self.global_config.conn_pars
+		self.pg_eng.logger=replog.logger
+		if args.noprompt:
+			drop_rep = 'YES'
+		else:
+			drp_msg = 'Dropping the replica %s will remove any replica reference. THERE IS NO UNDO!m\n Are you sure? YES/No\n'  % args.connkey
+			drop_rep = input(drp_msg)
+		if drop_rep == 'YES':
+			self.pg_eng.drop_replica()
+		elif drop_rep in  self.lst_yes:
+			print('Please type YES all uppercase to confirm')
+		sys.exit()
 		
-	
+		
+		
 	def create_service_schema(self, args):
 		
 		if args.connkey == 'all':
@@ -162,7 +188,7 @@ class replica_engine(object):
 			#daemon.start()
 	
 	def drop_service_schema(self, args):
-		lst_yes= ['yes',  'Yes', 'y', 'Y']
+		
 		if args.connkey == 'all':
 			print('You should specify a connection key')
 			self.list_connections(args)
@@ -179,7 +205,7 @@ class replica_engine(object):
 				drop_sch = input(drp_msg)
 			if drop_sch == 'YES':
 				self.pg_eng.drop_service_schema()
-			elif drop_sch in  lst_yes:
+			elif drop_sch in  self.lst_yes:
 				print('Please type YES all uppercase to confirm')
 			sys.exit()
 			
