@@ -132,18 +132,26 @@ class replica_engine(object):
 	def __init__(self, conn_file):
 		self.global_config = global_config(conn_file)
 		self.pg_eng=pg_engine()
+	
+	def init_logger(self, args, log_dest):
+		self.global_config.set_log_kwargs(args.connkey)
+		replog = replica_logging()
+		if log_dest:
+			self.global_config.log_kwargs["log_dest"] = log_dest
+		replog.init_logger(**self.global_config.log_kwargs)
+		return replog
+	
+	def add_replica(self, args):
+		replog = self.init_logger(args, 'stdout')
 		
+	
 	def create_service_schema(self, args):
 		
 		if args.connkey == 'all':
 			print('You should specify a connection key')
 			self.list_connections(args)
 		else:
-			
-			self.global_config.set_log_kwargs(args.connkey)
-			replog = replica_logging()
-			self.global_config.log_kwargs["log_dest"] = "stdout"
-			replog.init_logger(**self.global_config.log_kwargs)
+			replog = self.init_logger(args, 'stdout')
 			#keep_fds = [fh.stream.fileno()]
 			self.global_config.set_conn_vars(args.connkey)
 			#pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
@@ -160,10 +168,7 @@ class replica_engine(object):
 			self.list_connections(args)
 		else:
 			
-			self.global_config.set_log_kwargs(args.connkey)
-			replog = replica_logging()
-			self.global_config.log_kwargs["log_dest"] = "stdout"
-			replog.init_logger(**self.global_config.log_kwargs)
+			replog = self.init_logger(args, 'stdout')
 			self.global_config.set_conn_vars(args.connkey)
 			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
