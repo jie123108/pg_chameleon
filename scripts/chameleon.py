@@ -8,6 +8,7 @@ commands = [
 	'drop_service_schema', 
 	'add_replica', 
 	'drop_replica', 
+	'init_replica'
 	]
 command_help = 'Available commands, ' + ','.join(commands)
 connection_help = 'Specify the connection filename. If omitted defaults to config/connection.yaml'

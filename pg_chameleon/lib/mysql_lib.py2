@@ -3,7 +3,7 @@ import pymysql
 import sys
 import codecs
 import binascii
-
+import datetime
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.event import QueryEvent
 from pymysqlreplication.row_event import (
@@ -93,10 +93,10 @@ class mysql_engine(object):
 		Stream the replica using the batch data.
 		:param batch_data: The list with the master's batch data.
 		"""
+		table_type_map=self.get_table_type_map()	
 		schema_name=pg_engine.dest_schema
 		close_batch=False
 		total_events=0
-		table_type_map=self.get_table_type_map()	
 		master_data={}
 		group_insert=[]
 		id_batch=batch_data[0][0]
@@ -104,19 +104,21 @@ class mysql_engine(object):
 		log_position=batch_data[0][2]
 		log_table=batch_data[0][3]
 		my_stream = BinLogStreamReader(
-																connection_settings = self.mysql_con.mysql_conn, 
-																server_id=self.mysql_con.my_server_id, 
-																only_events=[RotateEvent, DeleteRowsEvent, WriteRowsEvent, UpdateRowsEvent, QueryEvent], 
-																log_file=log_file, 
-																log_pos=log_position, 
-																resume_stream=True, 
-																only_schemas=[self.mysql_con.my_database]
-														)
+									connection_settings = self.mysql_con.mysql_conn, 
+									server_id=self.mysql_con.my_server_id, 
+									only_events=[RotateEvent, DeleteRowsEvent, WriteRowsEvent, UpdateRowsEvent, QueryEvent], 
+									log_file=log_file, 
+									log_pos=log_position, 
+									resume_stream=True, 
+									only_schemas=[self.mysql_con.my_database]
+									)
 		self.logger.debug("log_file %s, log_position %s. id_batch: %s " % (log_file, log_position, id_batch))
 		for binlogevent in my_stream:
+			
 			total_events+=1
 			#self.logger.debug("log_file %s, log_position %s. id_batch: %s replica_batch_size:%s total_events:%s " % (log_file, log_position, id_batch, self.replica_batch_size, total_events))
 			if isinstance(binlogevent, RotateEvent):
+				event_time=binlogevent.timestamp
 				binlogfile=binlogevent.next_binlog
 				position=binlogevent.position
 				self.logger.debug("rotate event. binlogfile %s, position %s. " % (binlogfile, position))
@@ -124,17 +126,20 @@ class mysql_engine(object):
 					if log_file!=binlogfile:
 						master_data["File"]=binlogfile
 						master_data["Position"]=position
+						master_data["Time"]=event_time
 					if len(group_insert)>0:
 						pg_engine.write_batch(group_insert)
 						group_insert=[]
 					my_stream.close()
 					return [master_data, close_batch]
 			elif isinstance(binlogevent, QueryEvent):
+				event_time=binlogevent.timestamp
 				if len(group_insert)>0:
 					pg_engine.write_batch(group_insert)
 					group_insert=[]
 				master_data["File"]=binlogfile
 				master_data["Position"]=binlogevent.packet.log_pos
+				master_data["Time"]=event_time
 				self.sql_token.parse_sql(binlogevent.query)
 				
 				for token in self.sql_token.tokenised:
@@ -142,11 +147,11 @@ class mysql_engine(object):
 						#schema_name=binlogevent.schema.decode()
 						
 						query_data={
-												"binlog":log_file, 
-												"logpos":log_position, 
-												"schema": schema_name, 
-												"batch_id":id_batch, 
-												"log_table":log_table
+									"binlog":log_file, 
+									"logpos":log_position, 
+									"schema": schema_name, 
+									"batch_id":id_batch, 
+									"log_table":log_table
 						}
 						pg_engine.write_ddl(token, query_data)
 						close_batch=True
@@ -163,6 +168,8 @@ class mysql_engine(object):
 					log_file=binlogfile
 					log_position=binlogevent.packet.log_pos
 					table_name=binlogevent.table
+					event_time=binlogevent.timestamp
+					#self.logger.debug("row event. binlogfile %s, position %s. Date %s " % (binlogfile, log_position, datetime.datetime.fromtimestamp(event_time).isoformat()))
 					#schema_name=binlogevent.schema
 
 					column_map=table_type_map[table_name]
@@ -195,6 +202,7 @@ class mysql_engine(object):
 					#self.logger.debug("Action: %s Total events: %s " % (global_data["action"],  total_events))
 					master_data["File"]=log_file
 					master_data["Position"]=log_position
+					master_data["Time"]=event_time
 					if total_events>=self.replica_batch_size:
 						self.logger.debug("total events exceeded. Writing batch.: %s  " % (master_data,  ))
 						total_events=0
@@ -243,15 +251,15 @@ class mysql_engine(object):
 	def get_table_type_map(self):
 		table_type_map={}
 		self.logger.debug("collecting table type map")
-		sql_tables="""SELECT 
-											table_schema,
-											table_name
-								FROM 
-											information_schema.TABLES 
-								WHERE 
-														table_type='BASE TABLE' 
-											AND 	table_schema=%s
-								;
+		sql_tables="""	SELECT 
+						table_schema,
+						table_name
+					FROM 
+						information_schema.TABLES 
+					WHERE 
+							table_type='BASE TABLE' 
+						AND	table_schema=%s
+					;
 							"""
 		self.mysql_con.my_cursor.execute(sql_tables, (self.mysql_con.my_database))
 		table_list=self.mysql_con.my_cursor.fetchall()
@@ -418,7 +426,13 @@ class mysql_engine(object):
 		out_file='/tmp/output_copy.csv'
 		self.logger.info("locking the tables")
 		self.lock_tables()
-		for table_name in self.my_tables:
+		table_list = []
+		if pg_engine.table_limit[0] == '*':
+			for table_name in self.my_tables:
+				table_list.append(table_name)
+		else:
+			table_list = pg_engine.table_limit
+		for table_name in table_list:
 			slice_insert=[]
 			self.logger.info("copying table "+table_name)
 			table=self.my_tables[table_name]
@@ -508,6 +522,7 @@ class mysql_engine(object):
 		t_sql_master="SHOW MASTER STATUS;"
 		self.mysql_con.my_cursor.execute(t_sql_master)
 		self.master_status=self.mysql_con.my_cursor.fetchall()		
+		
 		
 	def lock_tables(self):
 		""" lock tables and get the log coords """

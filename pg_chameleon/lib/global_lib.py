@@ -3,7 +3,7 @@ import sys
 import os
 from tabulate import tabulate
 import logging
-from pg_chameleon import pg_engine
+from pg_chameleon import pg_engine, mysql_engine
 from daemonize import Daemonize
 	
 		
@@ -136,28 +136,42 @@ class global_config(object):
 class replica_engine(object):
 	def __init__(self, conn_file):
 		self.global_config = global_config(conn_file)
-		self.pg_eng=pg_engine()
-		self.lst_yes= ['yes',  'Yes', 'y', 'Y']
-	
+		self.pg_eng = pg_engine()
+		self.my_eng = mysql_engine()
+		self.lst_yes = ['yes',  'Yes', 'y', 'Y']
+		self.fh = None
 	def init_logger(self, args, log_dest):
 		self.global_config.set_log_kwargs(args.connkey)
 		replog = replica_logging()
 		if log_dest:
 			self.global_config.log_kwargs["log_dest"] = log_dest
-		replog.init_logger(**self.global_config.log_kwargs)
+		self.fh = replog.init_logger(**self.global_config.log_kwargs)
 		return replog
+	
+	def init_replica(self, args):
+		replog = self.init_logger(args, None)
+		self.my_eng.logger = replog.logger
+		self.global_config.set_conn_vars(args.connkey)
+		self.my_eng.conn_pars = self.global_config.conn_pars
+		self.my_eng.pg_eng = self.pg_eng
+		keep_fds = [self.fh.stream.fileno()]
+		pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
+		daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=False, keep_fds=keep_fds)
+		daemon.start()
+		
 	
 	def add_replica(self, args):
 		replog = self.init_logger(args, 'stdout')
 		self.global_config.set_conn_vars(args.connkey)
-		self.pg_eng.conn_pars=self.global_config.conn_pars
-		self.pg_eng.logger=replog.logger
+		self.pg_eng.conn_pars = self.global_config.conn_pars
+		self.pg_eng.logger = replog.logger
 		self.pg_eng.add_replica()
+		
 	def drop_replica(self, args):
 		replog = self.init_logger(args, 'stdout')
 		self.global_config.set_conn_vars(args.connkey)
-		self.pg_eng.conn_pars=self.global_config.conn_pars
-		self.pg_eng.logger=replog.logger
+		self.pg_eng.conn_pars = self.global_config.conn_pars
+		self.pg_eng.logger = replog.logger
 		if args.noprompt:
 			drop_rep = 'YES'
 		else:
