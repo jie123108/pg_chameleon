@@ -17,6 +17,9 @@ class pg_encoder(json.JSONEncoder):
 class pg_engine(object):
 	def __init__(self):
 		self.sql_dir = "%s/.pg_chameleon/sql/" % os.path.expanduser('~')	
+		self.table_ddl={}
+		self.idx_ddl={}
+		self.type_ddl={}
 		
 		self.type_dictionary = {
 						'integer':'integer',
@@ -68,6 +71,7 @@ class pg_engine(object):
 	
 	def create_schema(self):
 		self.connect_db()
+		self.set_autocommit(True)
 		self.dest_schema = self.dest_conn["destination_schema"]
 		
 		sql_drop = "DROP SCHEMA IF EXISTS " + self.dest_schema + " CASCADE;"
@@ -78,6 +82,109 @@ class pg_engine(object):
 		self.logger.info("creating the schema %s " % self.dest_schema)
 		self.pgsql_cur.execute(sql_create)
 		
+	
+	def build_tab_ddl(self):
+		""" the function iterates over the list l_tables and builds a new list with the statements for tables"""
+		for table_name in self.table_metadata:
+			table=self.table_metadata[table_name]
+			columns=table["columns"]
+			
+			ddl_head="CREATE TABLE "+'"'+table["name"]+'" ('
+			ddl_tail=");"
+			ddl_columns=[]
+			ddl_enum=[]
+			for column in columns:
+				if column["is_nullable"]=="NO":
+					col_is_null="NOT NULL"
+				else:
+					col_is_null="NULL"
+				column_type=self.type_dictionary[column["data_type"]]
+				if column_type=="enum":
+					enum_type="enum_"+table["name"]+"_"+column["column_name"]
+					sql_drop_enum='DROP TYPE IF EXISTS '+enum_type+' CASCADE;'
+					sql_create_enum="CREATE TYPE "+enum_type+" AS ENUM "+column["enum_list"]+";"
+					ddl_enum.append(sql_drop_enum)
+					ddl_enum.append(sql_create_enum)
+					column_type=enum_type
+				if column_type=="character varying" or column_type=="character":
+					column_type=column_type+"("+str(column["character_maximum_length"])+")"
+				if column_type=='numeric':
+					column_type=column_type+"("+str(column["numeric_precision"])+","+str(column["numeric_scale"])+")"
+				if column_type=='bit' or column_type=='float':
+					column_type=column_type+"("+str(column["numeric_precision"])+")"
+				if column["extra"]=="auto_increment":
+					column_type="bigserial"
+				ddl_columns.append('"'+column["column_name"]+'" '+column_type+" "+col_is_null )
+			def_columns=str(',').join(ddl_columns)
+			self.type_ddl[table["name"]]=ddl_enum
+			self.table_ddl[table["name"]]=ddl_head+def_columns+ddl_tail
+	
+	def create_tables(self):
+		sql_path=" SET search_path="+self.dest_schema+";"
+		self.pgsql_cur.execute(sql_path)
+		for table in self.table_ddl:
+			try:
+				ddl_enum=self.type_ddl[table]
+				for sql_type in ddl_enum:
+					self.pgsql_cur.execute(sql_type)
+			except psycopg2.Error as e:
+				self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
+				self.logger.error(sql_type)
+				
+			sql_create=self.table_ddl[table]
+			try:
+				self.pgsql_cur.execute(sql_create)
+			except psycopg2.Error as e:
+				self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
+				self.logger.error(sql_create)
+			self.store_table(table)
+
+
+	def store_table(self, table_name):
+		table_data=self.table_metadata[table_name]
+		for index in table_data["indices"]:
+			if index["index_name"]=="PRIMARY":
+				sql_insert=""" INSERT INTO sch_chameleon.t_replica_tables 
+										(
+											i_id_replica,
+											v_table_name,
+											v_schema_name,
+											v_table_pkey
+										)
+										VALUES (
+														%s,
+														%s,
+														%s,
+														ARRAY[%s]
+													)
+										ON CONFLICT (i_id_replica,v_table_name,v_schema_name)
+											DO UPDATE 
+												SET v_table_pkey=EXCLUDED.v_table_pkey
+										;
+								"""
+				self.pgsql_cur.execute(sql_insert, (self.i_id_replica, table_name, self.dest_schema, index["index_columns"].strip()))	
+	
+	
+	def set_replica_id(self, replica_status):
+		sql_source = """
+					UPDATE sch_chameleon.t_replica
+					SET
+						enm_status=%s
+					WHERE
+						t_conn_key=%s
+					RETURNING i_id_replica,t_dest_schema
+				;
+			"""
+		
+		self.pgsql_cur.execute(sql_source, (replica_status, self.conn_pars["connkey"]))
+		rep_data=self.pgsql_cur.fetchone()
+		try:
+			self.i_id_replica=rep_data[0]
+			self.dest_schema=rep_data[1]
+		except:
+			self.logger.error("Replica %s is not registered." % self.conn_pars["connkey"])
+			sys.exit()
+	
 	
 	def check_service_schema(self):
 		sql_check="""

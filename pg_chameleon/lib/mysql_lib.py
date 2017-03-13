@@ -207,8 +207,10 @@ class mysql_engine(object):
 		self.logger.info("Creating the schema in target database")
 		self.pg_eng.conn_pars = self.conn_pars
 		self.pg_eng.logger = self.logger
+		self.pg_eng.table_metadata  = self.my_tables
 		self.pg_eng.create_schema()
-		#self.pg_eng.build_tab_ddl()
-		#self.pg_eng.create_tables()
+		self.pg_eng.set_replica_id("initialising")
+		self.pg_eng.build_tab_ddl()
+		self.pg_eng.create_tables()
 		self.unlock_tables()
 		self.disconnect_dict_db()
