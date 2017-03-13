@@ -31,6 +31,9 @@ reindex_app_names:
 
 connections:
   replica1:
+  #init and replicate only the listed tables. empty list means all
+    replicate_tables:
+    
     src_conn:
         host: localhost
         port: 3306
