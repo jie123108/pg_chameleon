@@ -16,7 +16,12 @@ from pymysqlreplication.event import RotateEvent
 class mysql_engine(object):
 	def __init__(self):
 		self.my_tables = {}
+		self.table_file={}
 		self.conn_pars = {}
+	
+	def copy_table_data(self):
+		self.logger.info("start copy loop")
+		
 	
 	
 	def get_column_metadata(self, table):
@@ -122,11 +127,12 @@ class mysql_engine(object):
 		self.my_dict_cursor.execute(sql_tables, (self.src_conn["replica_database"]))
 		table_list=self.my_dict_cursor.fetchall()
 		for table in table_list:
+			self.logger.debug("collecting metadata for table %s" % (table["table_name"]))
 			column_data=self.get_column_metadata(table["table_name"])
 			index_data=self.get_index_metadata(table["table_name"])
 			dic_table={'name':table["table_name"], 'columns':column_data,  'indices': index_data}
-			#self.my_tables[table["table_name"]]=dic_table
-			self.logger.info(dic_table)
+			self.my_tables[table["table_name"]]=dic_table
+			
 	
 	
 	def connect_db(self):
@@ -177,27 +183,32 @@ class mysql_engine(object):
 		""" lock tables and get the log coords """
 		self.locked_tables=[]
 		lock_tables = ""
-		if len(self.my_tables)>0:
-			for table_name in self.my_tables:
-				table = self.my_tables[table_name]
-				self.locked_tables.append(table["name"])
-			lock_tables = ", ".join(self.locked_tables) 
+		for table_name in self.my_tables:
+			table = self.my_tables[table_name]
+			self.locked_tables.append(table["name"])
+		lock_tables = ", ".join(self.locked_tables) 
+		self.logger.info("flushing tables with read lock")
 		t_sql_lock="FLUSH TABLES %s WITH READ LOCK;" % lock_tables
 		self.my_dict_cursor.execute(t_sql_lock)
 		self.get_master_status()
 	
 	def unlock_tables(self):
 		""" unlock tables previously locked """
+		self.logger.info("releasing the read lock")
 		t_sql_unlock="UNLOCK TABLES;"
 		self.my_dict_cursor.execute(t_sql_unlock)
 	
 	
 	
 	def init_replica(self):
-		self.logger.debug(self.conn_pars)
 		self.connect_dict_db()
-		self.lock_tables()
 		self.get_table_metadata()
-		self.logger.debug(self.master_status)
-		#self.unlock_tables()
+		self.lock_tables()
+		self.logger.info("Creating the schema in target database")
+		self.pg_eng.conn_pars = self.conn_pars
+		self.pg_eng.logger = self.logger
+		self.pg_eng.create_schema()
+		#self.pg_eng.build_tab_ddl()
+		#self.pg_eng.create_tables()
+		self.unlock_tables()
 		self.disconnect_dict_db()

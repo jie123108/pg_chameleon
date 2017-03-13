@@ -27,8 +27,8 @@ replica = replica_engine(args.connfile)
 try:
 	getattr(replica, args.command)(args)
 	sys.exit()
-#except AttributeError as e:
-#	print (e)
+except AttributeError as e:
+	print (e)
 except SystemExit:
 	pass
 except:

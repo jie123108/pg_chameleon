@@ -52,10 +52,10 @@ class pg_engine(object):
 					}
 					
 	def connect_db(self):
-		dest_pars = self.conn_pars['dest_conn']
-		strconn = "dbname=%(pg_database)s user=%(user)s host=%(host)s password=%(password)s port=%(port)s"  % dest_pars
+		self.dest_conn= self.conn_pars['dest_conn']
+		strconn = "dbname=%(pg_database)s user=%(user)s host=%(host)s password=%(password)s port=%(port)s"  % self.dest_conn
 		self.pgsql_conn = psycopg2.connect(strconn)
-		self.pgsql_conn .set_client_encoding(dest_pars["pg_charset"])
+		self.pgsql_conn .set_client_encoding(self.dest_conn["pg_charset"])
 		self.pgsql_cur = self.pgsql_conn .cursor()
 		self.logger.info("connection to dest database established")
 
@@ -66,6 +66,18 @@ class pg_engine(object):
 	def disconnect_db(self):
 		self.pgsql_conn.close()
 	
+	def create_schema(self):
+		self.connect_db()
+		self.dest_schema = self.dest_conn["destination_schema"]
+		
+		sql_drop = "DROP SCHEMA IF EXISTS " + self.dest_schema + " CASCADE;"
+		
+		sql_create = " CREATE SCHEMA IF NOT EXISTS " + self.dest_schema + ";"
+		self.logger.info("dropping the schema %s " % self.dest_schema)
+		self.pgsql_cur.execute(sql_drop)
+		self.logger.info("creating the schema %s " % self.dest_schema)
+		self.pgsql_cur.execute(sql_create)
+		
 	
 	def check_service_schema(self):
 		sql_check="""
