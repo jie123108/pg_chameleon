@@ -157,12 +157,10 @@ class replica_engine(object):
 		keep_fds = [self.fh.stream.fileno()]
 		pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
 		if self.global_config.log_kwargs["log_dest"]  == 'stdout':
-			foreground = True
+			self.my_eng.init_replica()
 		else:
-			foreground = False
-			
-		daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=foreground , keep_fds=keep_fds)
-		daemon.start()
+			daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=False , keep_fds=keep_fds)
+			daemon.start()
 		
 	
 	def add_replica(self, args):
