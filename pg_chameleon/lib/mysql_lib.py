@@ -90,7 +90,6 @@ class mysql_engine(object):
 					csv_file=open(out_file, 'rb')
 					
 				try:
-					raise
 					self.pg_eng.copy_data(table_name, csv_file, self.my_tables)
 					self.print_progress(slice+1,total_slices, table_name)
 				except:
@@ -121,12 +120,11 @@ class mysql_engine(object):
 		cnt_slice = 1
 		total_slices = len(slice_insert)
 		for slice in slice_insert:
+			self.logger.info("insert in table %s, slice %s of %s" %(table_name, cnt_slice, total_slices))
 			sql_out="SELECT "+columns_ins+"  FROM "+table_name+" LIMIT "+str(slice*copy_limit)+", "+str(copy_limit)+";"
 			self.my_dict_cursor.execute(sql_out)
 			insert_data =  self.my_dict_cursor.fetchall()
-			self.logger.info("insert in table %s, slice %s of %s" %(table_name, cnt_slice, total_slices))
 			self.pg_eng.insert_data(table_name, insert_data , self.my_tables)
-			
 			cnt_slice=+1
 
 	
@@ -337,8 +335,9 @@ class mysql_engine(object):
 		self.pg_eng.create_schema()
 		self.pg_eng.set_replica_id("initialising")
 		self.pg_eng.build_tab_ddl()
+		self.pg_eng.build_idx_ddl()
 		self.pg_eng.create_tables()
 		self.copy_table_data()
 		self.unlock_tables()
-		
+		self.pg_eng.create_indices()
 		self.disconnect_dict_db()

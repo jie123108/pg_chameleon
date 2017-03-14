@@ -20,7 +20,7 @@ class pg_engine(object):
 		self.table_ddl={}
 		self.idx_ddl={}
 		self.type_ddl={}
-		
+		self.idx_sequence=0
 		self.type_dictionary = {
 						'integer':'integer',
 						'mediumint':'bigint',
@@ -81,6 +81,14 @@ class pg_engine(object):
 		self.pgsql_cur.execute(sql_drop)
 		self.logger.info("creating the schema %s " % self.dest_schema)
 		self.pgsql_cur.execute(sql_create)
+	
+	def create_indices(self):
+		self.logger.info("creating the indices")
+		for index in self.idx_ddl:
+			idx_ddl= self.idx_ddl[index]
+			for sql_idx in idx_ddl:
+				self.pgsql_cur.execute(sql_idx)
+	
 	
 	def copy_data(self, table,  csv_file,  my_tables={}):
 		column_copy=[]
@@ -143,6 +151,36 @@ class pg_engine(object):
 			def_columns=str(',').join(ddl_columns)
 			self.type_ddl[table["name"]]=ddl_enum
 			self.table_ddl[table["name"]]=ddl_head+def_columns+ddl_tail
+	
+	def build_idx_ddl(self):
+		
+		""" the function iterates over the list l_pkeys and builds a new list with the statements for pkeys """
+		for table_name in self.table_metadata:
+			table=self.table_metadata[table_name]
+			
+			table_name=table["name"]
+			indices=table["indices"]
+			table_idx=[]
+			for index in indices:
+				indx=index["index_name"]
+				index_columns=index["index_columns"]
+				non_unique=index["non_unique"]
+				if indx=='PRIMARY':
+					pkey_name="pk_"+table_name[0:20]+"_"+str(self.idx_sequence)
+					pkey_def='ALTER TABLE "'+table_name+'" ADD CONSTRAINT "'+pkey_name+'" PRIMARY KEY ('+index_columns+') ;'
+					table_idx.append(pkey_def)
+				else:
+					if non_unique==0:
+						unique_key='UNIQUE'
+					else:
+						unique_key=''
+					index_name='"idx_'+indx[0:20]+table_name[0:20]+"_"+str(self.idx_sequence)+'"'
+					idx_def='CREATE '+unique_key+' INDEX '+ index_name+' ON "'+table_name+'" ('+index_columns+');'
+					table_idx.append(idx_def)
+				self.idx_sequence+=1
+					
+			self.idx_ddl[table_name]=table_idx
+
 	
 	def create_tables(self):
 		sql_path=" SET search_path="+self.dest_schema+";"
