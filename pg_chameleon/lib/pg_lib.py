@@ -81,7 +81,32 @@ class pg_engine(object):
 		self.pgsql_cur.execute(sql_drop)
 		self.logger.info("creating the schema %s " % self.dest_schema)
 		self.pgsql_cur.execute(sql_create)
+	
+	def copy_data(self, table,  csv_file,  my_tables={}):
+		column_copy=[]
+		for column in my_tables[table]["columns"]:
+			column_copy.append('"'+column["column_name"]+'"')
+		sql_copy="COPY "+'"'+self.dest_schema+'"'+"."+'"'+table+'"'+" ("+','.join(column_copy)+") FROM STDIN WITH NULL 'NULL' CSV QUOTE '\"' DELIMITER',' ESCAPE '\"' ; "
+		self.pgsql_cur.copy_expert(sql_copy,csv_file)
+	
+	def insert_data(self, table,  insert_data,  my_tables={}):
+		column_copy=[]
+		column_marker=[]
 		
+		for column in my_tables[table]["columns"]:
+			column_copy.append('"'+column["column_name"]+'"')
+			column_marker.append('%s')
+		sql_head="INSERT INTO "+'"'+self.dest_schema+'"'+"."+'"'+table+'"'+" ("+','.join(column_copy)+") VALUES ("+','.join(column_marker)+");"
+		for data_row in insert_data:
+			column_values=[]
+			for column in my_tables[table]["columns"]:
+				column_values.append(data_row[column["column_name"]])
+			try:
+				self.pgsql_cur.execute(sql_head,column_values)	
+			except psycopg2.Error as e:
+					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
+					self.logger.error(self.pgsql_cur.mogrify(sql_head,column_values))
+	
 	
 	def build_tab_ddl(self):
 		""" the function iterates over the list l_tables and builds a new list with the statements for tables"""
