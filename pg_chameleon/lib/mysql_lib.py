@@ -91,6 +91,7 @@ class mysql_engine(object):
 					
 				
 				csv_file.close()
+				
 			
 		self.disconnect_db()
 	
