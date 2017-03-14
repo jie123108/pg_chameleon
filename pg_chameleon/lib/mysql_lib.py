@@ -90,11 +90,13 @@ class mysql_engine(object):
 					csv_file=open(out_file, 'rb')
 					
 				try:
+					raise
 					self.pg_eng.copy_data(table_name, csv_file, self.my_tables)
+					self.print_progress(slice+1,total_slices, table_name)
 				except:
 					self.logger.info("table %s error in PostgreSQL copy, saving slice number for the fallback to insert statements " % (table_name, ))
 					slice_insert.append(slice)
-				self.print_progress(slice+1,total_slices, table_name)
+				
 				slice+=1
 				csv_file.close()
 			try:
@@ -112,15 +114,20 @@ class mysql_engine(object):
 	
 	def insert_table_data(self, ins_arg):
 		"""fallback to inserts for table and slices """
-		slice_insert=ins_arg[0]
-		table_name=ins_arg[1]
-		columns_ins=ins_arg[2]
-		copy_limit=ins_arg[3]
+		slice_insert = ins_arg[0]
+		table_name = ins_arg[1]
+		columns_ins = ins_arg[2]
+		copy_limit = ins_arg[3]
+		cnt_slice = 1
+		total_slices = len(slice_insert)
 		for slice in slice_insert:
 			sql_out="SELECT "+columns_ins+"  FROM "+table_name+" LIMIT "+str(slice*copy_limit)+", "+str(copy_limit)+";"
 			self.my_dict_cursor.execute(sql_out)
 			insert_data =  self.my_dict_cursor.fetchall()
+			self.logger.info("insert in table %s, slice %s of %s" %(table_name, cnt_slice, total_slices))
 			self.pg_eng.insert_data(table_name, insert_data , self.my_tables)
+			
+			cnt_slice=+1
 
 	
 	def print_progress (self, iteration, total, table_name):
@@ -333,4 +340,5 @@ class mysql_engine(object):
 		self.pg_eng.create_tables()
 		self.copy_table_data()
 		self.unlock_tables()
+		
 		self.disconnect_dict_db()
