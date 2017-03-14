@@ -20,9 +20,92 @@ class mysql_engine(object):
 		self.conn_pars = {}
 	
 	def copy_table_data(self):
+		copy_max_memory = self.conn_pars["copy_max_memory"]
+		copy_mode = self.conn_pars["copy_mode"]
+		my_database = self.src_conn["replica_database"]
 		self.logger.info("start copy loop")
-		
+		self.connect_db()
+		for table_name in self.my_tables:
+			out_file = '/tmp/%s_%s.csv' % (my_database, table_name)
+			self.logger.info("copying data for table %s" % (table_name))
+			slice_insert = []
+			table = self.my_tables[table_name]
+			table_name = table["name"]
+			table_columns = table["columns"]
+			self.logger.debug("estimating rows in "+table_name)
+			sql_count = """ 
+					SELECT 
+							table_rows,
+							CASE
+								WHEN avg_row_length>0
+								then
+									round(("""+copy_max_memory+"""/avg_row_length))
+							ELSE
+								0
+							END as copy_limit
+						FROM 
+							information_schema.TABLES 
+						WHERE 
+								table_schema=%s 
+							AND	table_type='BASE TABLE'
+							AND table_name=%s 
+						;
+			"""
+			self.my_dict_cursor.execute(sql_count, (my_database, table_name))
+			count_rows = self.my_dict_cursor.fetchone()
+			total_rows = count_rows["table_rows"]
+			copy_limit = int(count_rows["copy_limit"])
+			if copy_limit == 0:
+				copy_limit = 1000000
+			num_slices = int(total_rows//copy_limit)
+			range_slices = list(range(num_slices+1))
+			total_slices = len(range_slices)
+			slice = range_slices[0]
+			self.logger.debug("%s will be copied in %s slices of %s rows"  % (table_name, total_slices, copy_limit))
+			columns_csv = self.generate_select(table_columns, mode="csv")
+			columns_ins = self.generate_select(table_columns, mode="insert")
+			csv_data=""
+			sql_out="SELECT "+columns_csv+" as data FROM "+table_name+";"
+			try:
+				self.logger.debug("Executing query for table %s"  % (table_name, ))
+				self.my_cursor.execute(sql_out)
+			except:
+				self.logger.error("error when pulling data from %s. sql executed: " % (table_name, sql_out))
+			self.logger.debug("Starting extraction loop for table %s"  % (table_name, ))
+			while True:
+				csv_results = self.my_cursor.fetchmany(copy_limit)
+				if len(csv_results) == 0:
+					break
+				csv_data="\n".join(d[0] for d in csv_results )
+				
+				if copy_mode=='direct':
+					csv_file=io.StringIO()
+					csv_file.write(csv_data)
+					csv_file.seek(0)
+
+				if copy_mode=='file':
+					csv_file=codecs.open(out_file, 'wb', self.src_conn["my_charset"])
+					csv_file.write(csv_data)
+					csv_file.close()
+					csv_file=open(out_file, 'rb')
+					
+				
+				csv_file.close()
+			
+		self.disconnect_db()
 	
+	def generate_select(self, table_columns, mode="csv"):
+		column_list=[]
+		columns = ""
+		if mode == "csv":
+			for column in table_columns:
+					column_list.append("COALESCE(REPLACE("+column["column_csv"]+", '\"', '\"\"'),'NULL') ")
+			columns="REPLACE(CONCAT('\"',CONCAT_WS('\",\"',"+','.join(column_list)+"),'\"'),'\"NULL\"','NULL')"
+		if mode == "insert":
+			for column in table_columns:
+				column_list.append(column["column_select"])
+			columns=','.join(column_list)
+		return columns
 	
 	def get_column_metadata(self, table):
 		hexify = self.conn_pars["hexify"]
@@ -212,5 +295,6 @@ class mysql_engine(object):
 		self.pg_eng.set_replica_id("initialising")
 		self.pg_eng.build_tab_ddl()
 		self.pg_eng.create_tables()
+		self.copy_table_data()
 		self.unlock_tables()
 		self.disconnect_dict_db()
