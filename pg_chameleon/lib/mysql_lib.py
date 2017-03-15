@@ -340,4 +340,7 @@ class mysql_engine(object):
 		self.copy_table_data()
 		self.unlock_tables()
 		self.pg_eng.create_indices()
+		self.pg_eng.clean_batch_data()
+		self.pg_eng.save_master_status(self.master_status, False)
+		self.pg_eng.set_replica_id("initialised")
 		self.disconnect_dict_db()

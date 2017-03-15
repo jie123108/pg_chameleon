@@ -69,6 +69,109 @@ class pg_engine(object):
 	def disconnect_db(self):
 		self.pgsql_conn.close()
 	
+	
+	def save_master_status(self, master_status, cleanup=False):
+		self.set_autocommit(True)
+		next_batch_id=None
+		sql_tab_log=""" 
+					SELECT 
+						CASE
+							WHEN v_log_table='t_log_replica_2'
+							THEN 
+								't_log_replica_1'
+							ELSE
+								't_log_replica_2'
+						END AS v_log_table
+					FROM
+						(
+							(
+							SELECT
+									v_log_table,
+									ts_created
+									
+							FROM
+									sch_chameleon.t_replica_batch
+							WHERE 
+								i_id_replica=%s
+							)
+							UNION ALL
+							(
+								SELECT
+									't_log_replica_2'  AS v_log_table,
+									'1970-01-01'::timestamp as ts_created
+							)
+							ORDER BY 
+								ts_created DESC
+							LIMIT 1
+						) tab
+				;
+					"""
+		self.pgsql_cur.execute(sql_tab_log, (self.i_id_replica, ))
+		results = self.pgsql_cur.fetchone()
+		table_file = results[0]
+		master_data = master_status[0]
+		binlog_name = master_data["File"]
+		binlog_position = master_data["Position"]
+		try:
+			event_time = datetime.datetime.fromtimestamp(master_data["Time"]).isoformat()
+		except:
+			event_time  = None
+		self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+		sql_master="""
+					INSERT INTO sch_chameleon.t_replica_batch
+													(
+														i_id_replica,
+														t_binlog_name, 
+														i_binlog_position,
+														v_log_table
+													)
+										VALUES (
+														%s,
+														%s,
+														%s,
+														%s
+													)
+					RETURNING i_id_batch
+					;
+				"""
+						
+		sql_event="""UPDATE sch_chameleon.t_replica
+					SET 
+						ts_last_event=%s 
+					WHERE 
+						i_id_replica=%s; 
+						"""
+		self.logger.debug("saving master data id replica: %s log file: %s  log position:%s Last event: %s" % (self.i_id_replica, binlog_name, binlog_position, event_time))
+		
+		
+		try:
+			if cleanup:
+				self.logger.info("cleaning not replayed batches for replica %s", self.i_id_replica)
+				sql_cleanup=""" DELETE FROM sch_chameleon.t_replica_batch WHERE i_id_replica=%s AND NOT b_replayed; """
+				self.pgsql_cur.execute(sql_cleanup, (self.i_id_replica, ))
+			self.pgsql_cur.execute(sql_master, (self.i_id_replica, binlog_name, binlog_position, table_file))
+			results=self.pgsql_cur.fetchone()
+			next_batch_id=results[0]
+		except psycopg2.Error as e:
+					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
+					self.logger.error(self.pgsql_cur.mogrify(sql_master, (self.i_id_replica, binlog_name, binlog_position, table_file)))
+		try:
+			self.pgsql_cur.execute(sql_event, (event_time, self.i_id_replica, ))
+			
+		except psycopg2.Error as e:
+					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
+					self.pgsql_cur.mogrify(sql_event, (event_time, self.i_id_replica, ))
+		
+		return next_batch_id
+	
+	def clean_batch_data(self):
+		self.set_autocommit(True)
+		sql_delete="""DELETE FROM sch_chameleon.t_replica_batch 
+								WHERE i_id_replica=%s;
+							"""
+		self.pgsql_cur.execute(sql_delete, (self.i_id_replica, ))
+	
+	
 	def create_schema(self):
 		self.connect_db()
 		self.set_autocommit(True)
