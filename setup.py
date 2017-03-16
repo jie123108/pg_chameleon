@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import stat
-import sys
 from os import geteuid, listdir, mkdir, chmod
 from os.path import  expanduser, isfile, join
 from setuptools import setup
+from distutils.sysconfig import get_python_lib
+python_lib=get_python_lib()
 
 if geteuid() == 0:
 	cham_dir = '/usr/local/etc/pg_chameleon'
@@ -35,11 +36,12 @@ sql_src = ['sql/create_schema.sql', 'sql/drop_schema.sql']
 
 sql_files = (sql_dir,sql_src)
 sql_files = (sql_dir,sql_src)
-
+package_data = ('%s/pg_chameleon' % python_lib,   ['LICENSE'])
 
 
 data_files.append(conn_files)
 data_files.append(sql_files)
+data_files.append(package_data)
 try:
 	sql_upgrade = ["%s/%s" % (sql_up_path, file) for file in listdir(sql_up_path) if isfile(join(sql_up_path, file))]
 	sql_up_files = (sql_up_dir,sql_upgrade)
@@ -66,16 +68,11 @@ The tool can pull the data from a cascading replica when the MySQL slave is conf
 	platforms=[
 		"linux"
 	],
+	license = "BSD", 
 	classifiers=[
 		"License :: OSI Approved :: BSD License"
 	],
-	py_modules=[
-		"pg_chameleon.__init__",
-		"pg_chameleon.lib.global_lib",
-		"pg_chameleon.lib.mysql_lib",
-		"pg_chameleon.lib.pg_lib",
-		"pg_chameleon.lib.sql_util"
-	],
+	packages = ['pg_chameleon'],
 	scripts=[
 		"scripts/chameleon.py"
 	],
