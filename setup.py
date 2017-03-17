@@ -73,7 +73,14 @@ The tool can pull the data from a cascading replica when the MySQL slave is conf
 	classifiers=[
 		"License :: OSI Approved :: BSD License"
 	],
-	packages = ['pg_chameleon'],
+	#packages = ['pg_chameleon'],
+	py_modules=[
+		"pg_chameleon.__init__",
+		"pg_chameleon.lib.global_lib",
+		"pg_chameleon.lib.mysql_lib",
+		"pg_chameleon.lib.pg_lib",
+		"pg_chameleon.lib.sql_util"
+	],
 	scripts=[
 		"scripts/chameleon.py"
 	],
