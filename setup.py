@@ -5,6 +5,7 @@ from os import geteuid, listdir, mkdir, chmod
 from os.path import  expanduser, isfile, join
 from setuptools import setup
 from distutils.sysconfig import get_python_lib
+
 python_lib=get_python_lib()
 
 if geteuid() == 0:
