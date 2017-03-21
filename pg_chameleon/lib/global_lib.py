@@ -5,6 +5,9 @@ from tabulate import tabulate
 import logging
 from pg_chameleon import pg_engine, mysql_engine
 from daemonize import Daemonize
+from distutils.sysconfig import get_python_lib
+from shutil import copy
+
 	
 		
 class replica_logging(object):
@@ -140,6 +143,47 @@ class replica_engine(object):
 		self.my_eng = mysql_engine()
 		self.lst_yes = ['yes',  'Yes', 'y', 'Y']
 		self.fh = None
+		python_lib=get_python_lib()
+		cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')	
+		local_conn = "%s/connection/" % cham_dir 
+		local_logs = "%s/logs/" % cham_dir 
+		local_pid = "%s/pid/" % cham_dir 
+		self.global_conn_example = '%s/pg_chameleon/connection/connection-example.yaml' % python_lib
+		self.local_conn_example = '%s/connection-example.yaml' % local_conn
+		self.conf_dirs=[
+			cham_dir, 
+			local_conn, 
+			local_logs, 
+			local_pid, 
+			
+		]
+		
+		
+		
+	def set_config(self, args):
+		""" 
+			The method loops the list self.conf_dirs creating it only if missing.
+			
+			The method checks the freshness of the config-example.yaml file and copies the new version
+			from the python library determined in the class constructor with get_python_lib().
+			
+			If the configuration file is missing the method copies the file with a different message.
+		
+		"""
+		for confdir in self.conf_dirs:
+			if not os.path.isdir(confdir):
+				print ("creating directory %s" % confdir)
+				os.mkdir(confdir)
+		
+		if os.path.isfile(self.local_conn_example):
+			if os.path.getctime(self.global_conn_example)>os.path.getctime(self.local_conn_example):
+				print ("updating connection example with %s" % self.local_conn_example)
+				copy(self.global_conn_example, self.local_conn_example)
+		else:
+			print ("copying connection  example in %s" % self.local_conn_example)
+			copy(self.global_conn_example, self.local_conn_example)
+		
+	
 	def init_logger(self, args, log_dest):
 		self.global_config.set_log_kwargs(args.connkey)
 		replog = replica_logging()

@@ -5,54 +5,103 @@ import os
 import time
 import logging
 import smtplib
+from distutils.sysconfig import get_python_lib
+from shutil import copy
+
+
+class config_dir(object):
+	""" 
+		Class used to setup the local user configuration directory.
+		The class constructor sets only the class variables for the method set_config.
+		The function get_python_lib() is used to determine the python library where pg_chameleon is installed.
+	"""
+	def __init__(self):
+		"""
+			Class constructor.
+		"""
+		python_lib=get_python_lib()
+		cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')	
+		local_config = "%s/config/" % cham_dir 
+		local_logs = "%s/logs/" % cham_dir 
+		local_pid = "%s/pid/" % cham_dir 
+		self.global_config_example = '%s/pg_chameleon/config/config-example.yaml' % python_lib
+		self.local_config_example = '%s/config-example.yaml' % local_config
+		self.conf_dirs=[
+			cham_dir, 
+			local_config, 
+			local_logs, 
+			local_pid, 
+			
+		]
+		
+	def set_config(self):
+		""" 
+			The method loops the list self.conf_dirs creating it only if missing.
+			
+			The method checks the freshness of the config-example.yaml file and copies the new version
+			from the python library determined in the class constructor with get_python_lib().
+			
+			If the configuration file is missing the method copies the file with a different message.
+		
+		"""
+		for confdir in self.conf_dirs:
+			if not os.path.isdir(confdir):
+				print ("creating directory %s" % confdir)
+				os.mkdir(confdir)
+		
+		if os.path.isfile(self.local_config_example):
+			if os.path.getctime(self.global_config_example)>os.path.getctime(self.local_config_example):
+				print ("updating config_example %s" % self.local_config_example)
+				copy(self.global_config_example, self.local_config_example)
+		else:
+			print ("copying config_example %s" % self.local_config_example)
+			copy(self.global_config_example, self.local_config_example)
+		
+			
+			
+			
+
 class global_config(object):
 	"""
-		This class parses the configuration file which is in config/config.yaml and sets 
-		the class variables used by the other libraries. 
+		This class parses the configuration file specified by the parameter config_name and sets 
+		the class variables used by the replica_engine class. 
 		The constructor checks if the configuration file is present and if is missing emits an error message followed by
 		the sys.exit() command. If the configuration file is successful parsed the class variables are set from the
-		configuration values.
-		The class sets the log output file from the parameter command.  If the log destination is stdout then the logfile is ignored
+		configuration values. 
 		
-		:param command: the command specified on the pg_chameleon.py command line
+		The  function get_python_lib() is used to determine the library directory where pg_chameleon is installed in order to get the
+		sql files.
+		The configuration files are searched in the $HOME/.pg_chameleon/config.
+		Should any parameter be missing in config the class constructor emits an error message specifying the parameter with reference to config-example.yaml.
+		
+		:param config_name: the configuration file to use. If omitted is set to default.
 	
 	"""
 	def __init__(self,config_name="default"):
 		"""
-			Class  constructor.
+			The class  constructor.
 		"""
-		cham_dir = '/usr/local/etc/pg_chameleon'
-		global_config = '%s/config' % cham_dir
-		global_sql = '%s/sql' % cham_dir
+		python_lib=get_python_lib()
+		cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')	
+		config_dir = '%s/config/' % cham_dir
+		sql_dir = "%s/pg_chameleon/sql/" % python_lib
 		
-		local_config = "%s/.pg_chameleon/config/" % os.path.expanduser('~')	
-		local_sql = "%s/.pg_chameleon/sql/" % os.path.expanduser('~')	
-		config_dirs = [local_config,global_config]
 		
-		sql_dirs = [local_sql,global_sql]
-		
-		sql_missing = True
 		config_missing = True
 		
-		for sqldir in sql_dirs:
-			if os.path.isdir(sqldir):
-				self.sql_dir = sqldir
-				sql_missing = False
-				break
-		if sql_missing:
-			print("**FATAL - sql directory missing in any of the expected paths %s"  % ', '.join(sql_dirs))
-			sys.exit()
+		if os.path.isdir(sql_dir):
+				self.sql_dir = sql_dir
+		else:
+			print("**FATAL - sql directory %s missing "  % self.sql_dir)
+			sys.exit(1)
 			
-		for config_dir in config_dirs:
-			config_file = '%s/%s.yaml' % (config_dir, config_name)
-			if os.path.isfile(config_file):
-				self.config_name = config_name
-				self.config_dir = config_dir
-				config_missing = False
-				break
-		if config_missing:
-			print("**FATAL - could not find the configuration file in any of expected paths %s"  % ', '.join(config_dirs))
-			sys.exit()
+		config_file = '%s/%s.yaml' % (config_dir, config_name)
+		if os.path.isfile(config_file):
+			self.config_name = config_name
+			self.config_dir = config_dir
+		else:
+			print("**FATAL - could not find the configuration file %s.yaml in %s"  % (config_name, config_dir))
+			sys.exit(2)
 		conffile = open(config_file, 'rb')
 		confdic = yaml.load(conffile.read())
 		conffile.close()
@@ -102,8 +151,16 @@ class global_config(object):
 		except KeyError as key_missing:
 			print('Missing key %s in configuration file. check %s/config-example.yaml for reference' % (key_missing, self.config_dir))
 			sys.exit()
-
+	
+	
 	def get_source_name(self, config_name = 'default'):
+		"""
+		The method tries to set the parameter source_name determined from the configuration file.
+		The value is used to query the replica catalog in order to get the source sstatus in method list_config().
+		
+		:param config_name: the configuration file to use. If omitted is set to default.
+		"""
+		
 		config_file = '%s/%s.yaml' % (self.config_dir, config_name)
 		self.config_name = config_name
 		if os.path.isfile(config_file):
@@ -119,21 +176,21 @@ class global_config(object):
 		
 class replica_engine(object):
 	"""
-		This class acts as bridge between the mysql and postgresql engines. The constructor inits the global configuration
-		class  and setup the mysql and postgresql engines as class objects. 
-		The class setup the logging using the configuration parameter (e.g. log level debug on stdout).
-		
-		:param command: the command specified on the pg_chameleon.py command line
-		
-		
+		This class is wraps the the mysql and postgresql engines in order to perform the various activities required for the replica. 
+		The constructor inits the global configuration class  and setup the mysql and postgresql engines as class objects. 
+		The class sets the logging using the configuration parameter.
 		
 	"""
 	def __init__(self, config, stdout=False):
+		"""
+			Class constructor
+		"""
+		self.lst_yes= ['yes',  'Yes', 'y', 'Y']
 		self.global_config=global_config(config)
 		self.logger = logging.getLogger(__name__)
 		self.logger.setLevel(logging.DEBUG)
 		self.logger.propagate = False
-		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s: %(message)s", "%b %e %H:%M:%S")
+		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s (%(lineno)s): %(message)s", "%b %e %H:%M:%S")
 		
 		if self.global_config.log_dest=='stdout' or stdout:
 			fh=logging.StreamHandler(sys.stdout)
@@ -160,7 +217,39 @@ class replica_engine(object):
 		self.pid_file = self.global_config.pid_file
 		self.exit_file = self.global_config.exit_file
 	
+	def detach_replica(self):
+		"""
+			The method terminates the replica, remove the source from the table t_sources and resets the sequences in 
+			the postgresql database, leaving the replica snapshot capable to continue the activity directly on PostgreSQL
+		"""
+		source_name = self.global_config.source_name
+		drp_msg = 'Detaching the replica will remove any reference for the source %s.\n Are you sure? YES/No\n'  % source_name
+		if sys.version_info[0] == 3:
+			drop_src = input(drp_msg)
+		else:
+			drop_src = raw_input(drp_msg)
+		if drop_src == 'YES':
+			self.stop_replica(allow_restart=False)
+			self.pg_eng.reset_sequences(self.global_config.source_name)
+			self.pg_eng.drop_source(self.global_config.source_name)
+		elif drop_src in  self.lst_yes:
+			print('Please type YES all uppercase to confirm')
+		sys.exit()
+		
+		print('replica detached')
+	
+	
 	def init_replica(self):
+		"""
+			The method initialise a replica.
+		
+			It calls the pg_engine methods set_source_id which sets the source identifier and change the source status.
+			
+			The pg_engine method clean_batch_data is used to remove any unreplayed row in the tables t_log_replica_1(2).
+			
+			The class methods create_schema, copy_table_data and create_indices are called in sequence to initialise the replica.
+			
+		"""
 		self.pg_eng.set_source_id('initialising')
 		self.pg_eng.clean_batch_data()
 		self.create_schema()
@@ -169,7 +258,13 @@ class replica_engine(object):
 		self.pg_eng.set_source_id('initialised')
 
 	def wait_for_replica_end(self):
-		""" waiting for replica end"""
+		""" 
+			The method is used to wait for the replica's end monitoring the pid file.
+			The replica status is determined using the check_running method passing the write_pid=false.
+			
+			There is a 5 seconds sleep between each check.
+			
+		"""
 		self.logger.info("waiting for replica process to stop")
 		while True:
 			replica_running=self.check_running(write_pid=False)
@@ -181,6 +276,10 @@ class replica_engine(object):
 	
 
 	def stop_replica(self, allow_restart=True):
+		"""
+			the method writes the exit file in the pid directory and waits for the replica process's end.
+			If allow_restart is true the exit file is removed.
+		"""
 		exit=open(self.exit_file, 'w')
 		exit.close()
 		self.wait_for_replica_end()
@@ -188,6 +287,9 @@ class replica_engine(object):
 			os.remove(self.exit_file)
 	
 	def enable_replica(self):
+		"""
+			The  method remove the exit file in order to let the replica start again.
+		"""
 		try:
 			os.remove(self.exit_file)
 			self.logger.info("Replica enabled")
@@ -249,7 +351,10 @@ class replica_engine(object):
 	
 	
 	def check_running(self, write_pid=False):
-		""" checks if the process is running. saves the pid file if not """
+		""" 
+			checks if the process is running. 
+			If swrite_pid is set to true and the replica is not running it saves the pid file.
+		"""
 		
 		process_running=False 
 		try:
@@ -269,7 +374,15 @@ class replica_engine(object):
 		
 	def run_replica(self):
 		"""
-			Runs the replica loop. 
+			The method starts and run the replica loop. 
+			Before starting the loop checks if the replica is already running with check_running with write_pid=True.
+			
+			It also checks whether the exit file is present or not. 
+			If present skips the replica start, otherwise start the while loop which runs the mysql_engine method run_replica.
+			
+			When the mysql_engine.run_replica() completes it checks if there is the exit file and eventually exit the loop.
+			Otherwise sleeps for the amount or seconds set in sleep_loop.
+			
 		"""
 		already_running = self.check_running(write_pid=True)
 		exit_request = self.check_file_exit()
@@ -323,7 +436,7 @@ class replica_engine(object):
 		self.pg_eng.add_source(source_name, dest_schema)
 
 	def drop_source(self):
-		lst_yes= ['yes',  'Yes', 'y', 'Y']
+		
 		source_name = self.global_config.source_name
 		drp_msg = 'Dropping the source %s will remove drop any replica reference.\n Are you sure? YES/No\n'  % source_name
 		if sys.version_info[0] == 3:
@@ -332,7 +445,7 @@ class replica_engine(object):
 			drop_src = raw_input(drp_msg)
 		if drop_src == 'YES':
 			self.pg_eng.drop_source(self.global_config.source_name)
-		elif drop_src in  lst_yes:
+		elif drop_src in  self.lst_yes:
 			print('Please type YES all uppercase to confirm')
 		sys.exit()
 		
