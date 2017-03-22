@@ -31,7 +31,7 @@ reindex_app_names:
 
 connections:
   test:
-  #init and replicate only the listed tables. empty list means all
+    #init and replicate only the listed tables. empty list means all
     replicate_tables:
   
     src_conn:

@@ -14,9 +14,8 @@ addons:
   postgresql: "9.5"
   
 before_script:
- - psql -c "create user usr_test with password 'test';" -U postgres
- - psql -c 'create database db_test with owner usr_test;' -U postgres
-
+ - tests/setup_db.sh
+ 
  # command to run tests
 script: tests/test.sh
 
