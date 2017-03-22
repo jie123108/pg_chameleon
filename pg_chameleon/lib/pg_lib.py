@@ -6,6 +6,7 @@ import decimal
 import time
 import base64
 import os
+from distutils.sysconfig import get_python_lib
 
 class pg_encoder(json.JSONEncoder):
 	def default(self, obj):
@@ -16,7 +17,8 @@ class pg_encoder(json.JSONEncoder):
 
 class pg_engine(object):
 	def __init__(self):
-		self.sql_dir = "%s/.pg_chameleon/sql/" % os.path.expanduser('~')	
+		python_lib=get_python_lib()
+		self.sql_dir = "%s/pg_chameleon/sql/" % python_lib
 		self.table_ddl={}
 		self.idx_ddl={}
 		self.type_ddl={}
