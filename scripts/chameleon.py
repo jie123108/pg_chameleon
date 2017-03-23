@@ -34,5 +34,5 @@ except SystemExit:
 	pass
 except:
 	print ("Unexpected error:", sys.exc_info()[0])
-	raise
+	sys.exit(1)
 
