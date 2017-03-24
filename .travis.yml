@@ -6,10 +6,15 @@ python:
   - "3.4"
   - "3.5"
   - "3.6"
-# command to install dependencies
+# install pg_chameleon
 install: "pip install ."
+
 services:
   - mysql
+
+env:
+   - MYVER='55'
+
 addons:
   postgresql: "9.5"
   
