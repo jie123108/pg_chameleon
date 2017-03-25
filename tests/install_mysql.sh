@@ -13,4 +13,5 @@ sudo apt-key adv --keyserver pgp.mit.edu --recv-keys 5072E1F5
 sudo apt-get update -q
 sudo apt-get install -q -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" mysql-server
 echo "trying to connect to mysql via socket"
-mysql -h localhost -u root < "SELECT version();"
+mysql -h localhost -u root -e "SELECT version();"
+exit 1
