@@ -9,4 +9,4 @@ fi
 sudo cp -f ${here}/my${MYVER}.cnf /etc/mysql/conf.d/my.cnf
 sudo service mysql restart
 sudo cat /var/log/mysql/error.log
-mysql -u root < ${here}/setup_mysql.sql
+sudo mysql -u root < ${here}/setup_mysql.sql
