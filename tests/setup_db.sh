@@ -9,4 +9,13 @@ fi
 sudo cp -f ${here}/my${MYVER}.cnf /etc/mysql/conf.d/my.cnf
 sudo service mysql restart
 sudo cat /var/log/mysql/error.log
-sudo mysql -u root < ${here}/setup_mysql.sql
+
+if [ "${MYVER}" != "5.6" ]
+then
+	sudo mysql -u root < ${here}/setup_mysql.sql
+else
+	mysql -u root < ${here}/setup_mysql.sql
+fi
+
+
+
