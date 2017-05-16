@@ -1,40 +1,166 @@
-from pg_chameleon import mysql_engine, pg_engine
 import yaml
 import sys
 import os
-import time
+from tabulate import tabulate
 import logging
-import smtplib
+from pg_chameleon import pg_engine, mysql_engine
+from daemonize import Daemonize
 from distutils.sysconfig import get_python_lib
 from shutil import copy
 
+	
+		
+class replica_logging(object):
+	def __init(self):
+		self.logger=None
 
-class config_dir(object):
-	""" 
-		Class used to setup the local user configuration directory.
-		The class constructor sets only the class variables for the method set_config.
-		The function get_python_lib() is used to determine the python library where pg_chameleon is installed.
+	def init_logger(self, log_dest,log_level,log_append, log_dir, connkey):
+		"""
+			
+		"""
+		log_file= '%s/%s.log' % (log_dir,connkey)
+		log_file = os.path.expanduser(log_file)
+		self.logger = logging.getLogger(__name__)
+		self.logger.setLevel(logging.DEBUG)
+		self.logger.propagate = False
+		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s (%(lineno)s): %(message)s", "%b %e %H:%M:%S")
+		
+		if log_dest=='stdout':
+			fh=logging.StreamHandler(sys.stdout)
+			
+		elif log_dest=='file':
+			if log_append:
+				file_mode='a'
+			else:
+				file_mode='w'
+			fh = logging.FileHandler(log_file, file_mode)
+		
+		if log_level=='debug':
+			fh.setLevel(logging.DEBUG)
+		elif log_level=='info':
+			fh.setLevel(logging.INFO)
+			
+		fh.setFormatter(formatter)
+		self.logger.addHandler(fh)
+		return fh
+
+
+class global_config(object):
 	"""
-	def __init__(self):
+		This class parses the configuration file which defaults to config/config.yaml and the config/connection.yaml if not specified.
+		The class variables used by the other libraries are retrieved from the yaml configuration file. 
+		A separate connection file defaults to config/connection.yaml if no file is specified.
+		The constructor checks if the configuration file is present and emits an error message followed by
+		the sys.exit() command if the files are missing. 
+		The class sets the log output file name using the start date and  from the parameter command.  If the log destination is stdout then the logfile is ignored
+		
+	
+	"""
+	def __init__(self, connection_file, load_config=False):
 		"""
-			Class constructor.
+			Class  constructor.
 		"""
+		local_conndir= "%s/.pg_chameleon/connection/" % os.path.expanduser('~')	
+		
+		if connection_file:
+			self.connection_file = '%s/%s'%(local_conndir, connection_file)
+			if load_config:
+				self.load_config()
+		else:
+			print("**FATAL - invalid connection file specified **\Expected filename got %s." % (self.connection_file))
+			sys.exit(1)
+		self.lst_skip=["src_conn", "dest_conn", "connections"]
+		self.conn_pars={}
+		self.log_kwargs={}
+		
+	def set_log_kwargs(self, connkey = "all"):
+		self.load_connection()
+		log_pars = ['log_dest','log_level','log_append', 'log_dir']
+		for par in log_pars:
+			self.log_kwargs[par] = self.conn_pars[par]
+		self.log_kwargs["connkey"] = connkey
+	
+	def set_copy_max_memory(self):
+		copy_max_memory = str(self.conn_pars["copy_max_memory"])[:-1]
+		copy_scale=str(self.conn_pars["copy_max_memory"] )[-1]
+		try:
+			int(copy_scale)
+			copy_max_memory = self.conn_pars["copy_max_memory"]
+		except:
+			if copy_scale =='k':
+				copy_max_memory = str(int(copy_max_memory)*1024)
+			elif copy_scale =='M':
+				copy_max_memory = str(int(copy_max_memory)*1024*1024)
+			elif copy_scale =='G':
+				copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
+			else:
+				print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
+				sys.exit()
+		self.conn_pars["copy_max_memory"] = copy_max_memory
+	
+	
+	def set_conn_vars(self, connkey):
+		try:
+			self.currentconn= self.connection["connections"][connkey]
+			self.conn_pars["connections"] = None
+			for key in self.currentconn:
+				self.conn_pars[key] = self.currentconn[key]
+				if key not in self.lst_skip:
+					print('Override value key %s to %s' % (key, self.currentconn[key]))
+			self.set_copy_max_memory()	
+			self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
+			self.conn_pars["log_dir"] = os.path.expanduser(self.conn_pars["log_dir"])
+			self.conn_pars["connkey"] = connkey
+		except KeyError as e:
+			print("wrong connection key specified %s" % (e, ))
+			sys.exit(1)
+		except:
+			raise
+		
+	
+	def load_connection(self):
+		""" 
+		"""
+		
+		if not os.path.isfile(self.connection_file):
+			print("**FATAL - connection file missing **\ncopy config/connection-example.yaml to %s and set your connection settings." % (self.connection_file))
+			sys.exit()
+		
+		connectfile = open(self.connection_file, 'r')
+		self.connection = yaml.load(connectfile.read())
+		connectfile.close()
+		conndic = self.connection
+		for key in conndic:
+			self.conn_pars[key] = conndic[key]
+		self.set_copy_max_memory()	
+		
+		
+
+class replica_engine(object):
+	def __init__(self, conn_file):
+		self.global_config = global_config(conn_file)
+		self.pg_eng = pg_engine()
+		self.my_eng = mysql_engine()
+		self.lst_yes = ['yes',  'Yes', 'y', 'Y']
+		self.fh = None
 		python_lib=get_python_lib()
 		cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')	
-		local_config = "%s/config/" % cham_dir 
+		local_conn = "%s/connection/" % cham_dir 
 		local_logs = "%s/logs/" % cham_dir 
 		local_pid = "%s/pid/" % cham_dir 
-		self.global_config_example = '%s/pg_chameleon/config/config-example.yaml' % python_lib
-		self.local_config_example = '%s/config-example.yaml' % local_config
+		self.global_conn_example = '%s/pg_chameleon/connection/connection-example.yaml' % python_lib
+		self.local_conn_example = '%s/connection-example.yaml' % local_conn
 		self.conf_dirs=[
 			cham_dir, 
-			local_config, 
+			local_conn, 
 			local_logs, 
 			local_pid, 
 			
 		]
 		
-	def set_config(self):
+		
+		
+	def set_config(self, args):
 		""" 
 			The method loops the list self.conf_dirs creating it only if missing.
 			
@@ -49,461 +175,133 @@ class config_dir(object):
 				print ("creating directory %s" % confdir)
 				os.mkdir(confdir)
 		
-		if os.path.isfile(self.local_config_example):
-			if os.path.getctime(self.global_config_example)>os.path.getctime(self.local_config_example):
-				print ("updating config_example %s" % self.local_config_example)
-				copy(self.global_config_example, self.local_config_example)
+		if os.path.isfile(self.local_conn_example):
+			if os.path.getctime(self.global_conn_example)>os.path.getctime(self.local_conn_example):
+				print ("updating connection example with %s" % self.local_conn_example)
+				copy(self.global_conn_example, self.local_conn_example)
 		else:
-			print ("copying config_example %s" % self.local_config_example)
-			copy(self.global_config_example, self.local_config_example)
+			print ("copying connection  example in %s" % self.local_conn_example)
+			copy(self.global_conn_example, self.local_conn_example)
 		
-			
-			
-			
-
-class global_config(object):
-	"""
-		This class parses the configuration file specified by the parameter config_name and sets 
-		the class variables used by the replica_engine class. 
-		The constructor checks if the configuration file is present and if is missing emits an error message followed by
-		the sys.exit() command. If the configuration file is successful parsed the class variables are set from the
-		configuration values. 
-		
-		The  function get_python_lib() is used to determine the library directory where pg_chameleon is installed in order to get the
-		sql files.
-		The configuration files are searched in the $HOME/.pg_chameleon/config.
-		Should any parameter be missing in config the class constructor emits an error message specifying the parameter with reference to config-example.yaml.
-		
-		:param config_name: the configuration file to use. If omitted is set to default.
 	
-	"""
-	def __init__(self,config_name="default"):
-		"""
-			The class  constructor.
-		"""
-		python_lib=get_python_lib()
-		cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')	
-		config_dir = '%s/config/' % cham_dir
-		sql_dir = "%s/pg_chameleon/sql/" % python_lib
-		
-		
-		config_missing = True
-		
-		if os.path.isdir(sql_dir):
-				self.sql_dir = sql_dir
+	def init_logger(self, args, log_dest):
+		self.global_config.set_log_kwargs(args.connkey)
+		replog = replica_logging()
+		if log_dest:
+			self.global_config.log_kwargs["log_dest"] = log_dest
+		self.fh = replog.init_logger(**self.global_config.log_kwargs)
+		return replog
+	
+	def init_replica(self, args):
+		replog = self.init_logger(args, None)
+		self.my_eng.logger = replog.logger
+		self.global_config.set_conn_vars(args.connkey)
+		self.my_eng.conn_pars = self.global_config.conn_pars
+		self.my_eng.pg_eng = self.pg_eng
+		keep_fds = [self.fh.stream.fileno()]
+		pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
+		if self.global_config.log_kwargs["log_dest"]  == 'stdout':
+			self.my_eng.init_replica()
 		else:
-			print("**FATAL - sql directory %s missing "  % self.sql_dir)
-			sys.exit(1)
+			daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=False , keep_fds=keep_fds)
+			daemon.start()
+		
+	
+	def add_replica(self, args):
+		replog = self.init_logger(args, 'stdout')
+		self.global_config.set_conn_vars(args.connkey)
+		self.pg_eng.conn_pars = self.global_config.conn_pars
+		self.pg_eng.logger = replog.logger
+		self.pg_eng.add_replica()
+		
+	def drop_replica(self, args):
+		replog = self.init_logger(args, 'stdout')
+		self.global_config.set_conn_vars(args.connkey)
+		self.pg_eng.conn_pars = self.global_config.conn_pars
+		self.pg_eng.logger = replog.logger
+		if args.noprompt:
+			drop_rep = 'YES'
+		else:
+			drp_msg = 'Dropping the replica %s will remove any replica reference. THERE IS NO UNDO!m\n Are you sure? YES/No\n'  % args.connkey
+			drop_rep = input(drp_msg)
+		if drop_rep == 'YES':
+			self.pg_eng.drop_replica()
+		elif drop_rep in  self.lst_yes:
+			print('Please type YES all uppercase to confirm')
+		sys.exit()
+		
+		
+		
+	def create_service_schema(self, args):
+		
+		if args.connkey == 'all':
+			print('You should specify a connection key')
+			self.list_connections(args)
+		else:
+			replog = self.init_logger(args, 'stdout')
+			#keep_fds = [fh.stream.fileno()]
+			self.global_config.set_conn_vars(args.connkey)
+			#pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
+			self.pg_eng.conn_pars=self.global_config.conn_pars
+			self.pg_eng.logger=replog.logger
+			self.pg_eng.create_service_schema()
+			#daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=True, keep_fds=keep_fds)
+			#daemon.start()
+	
+	def drop_service_schema(self, args):
+		
+		if args.connkey == 'all':
+			print('You should specify a connection key')
+			self.list_connections(args)
+		else:
 			
-		config_file = '%s/%s.yaml' % (config_dir, config_name)
-		if os.path.isfile(config_file):
-			self.config_name = config_name
-			self.config_dir = config_dir
-		else:
-			print("**FATAL - could not find the configuration file %s.yaml in %s"  % (config_name, config_dir))
+			replog = self.init_logger(args, 'stdout')
+			self.global_config.set_conn_vars(args.connkey)
+			self.pg_eng.conn_pars=self.global_config.conn_pars
+			self.pg_eng.logger=replog.logger
+			if args.noprompt:
+				drop_sch = 'YES'
+			else:
+				drp_msg = 'Dropping the service schema from %s will DESTROY any replica reference.\n Are you sure? YES/No\n'  % args.connkey
+				drop_sch = input(drp_msg)
+			if drop_sch == 'YES':
+				self.pg_eng.drop_service_schema()
+			elif drop_sch in  self.lst_yes:
+				print('Please type YES all uppercase to confirm')
+			sys.exit()
+			
+			
+	
+	def list_connections(self, args):
+		self.global_config.load_connection()
+		tab_headers=["Connection key", "Source host", "Destination host", "Replica type"]
+		tab_body=[]
+		self.conn_list=self.global_config.connection["connections"]
+		for connkey in self.conn_list:
+			conndic = self.conn_list[connkey]
+			tab_row=[connkey, conndic["src_conn"]["host"], conndic["dest_conn"]["host"] , conndic["src_conn"]["type"]]
+			tab_body.append(tab_row)
+		print(tabulate(tab_body, headers=tab_headers))
+	
+	def show_connection(self, args):
+		tab_body=[]
+		if args.connkey == 'all':
+			print("**FATAL - no connection key specified. Use --connkey on the command line.\nAvailable connections " )
+			self.list_connections(args)
+			sys.exit()
+		self.global_config.load_connection()
+		try:
+			self.global_config.set_conn_vars(args.connkey)
+		except KeyError:
+			print("**FATAL - wrong connection key specified." )
+			self.list_connections()
 			sys.exit(2)
-		conffile = open(config_file, 'rb')
-		confdic = yaml.load(conffile.read())
-		conffile.close()
-		try:
-			self.source_name = confdic["source_name"]
-			self.dest_schema = confdic["dest_schema"]
-			self.mysql_conn = confdic["mysql_conn"]
-			self.pg_conn = confdic["pg_conn"]
-			self.my_database = confdic["my_database"]
-			self.my_charset = confdic["my_charset"]
-			self.pg_charset = confdic["pg_charset"]
-			self.pg_database = confdic["pg_database"]
-			self.my_server_id = confdic["my_server_id"]
-			self.replica_batch_size = confdic["replica_batch_size"]
-			self.tables_limit = confdic["tables_limit"]
-			self.copy_mode = confdic["copy_mode"]
-			self.hexify = confdic["hexify"]
-			self.log_level = confdic["log_level"]
-			self.log_dest = confdic["log_dest"]
-			self.log_append = confdic["log_append"]
+		
+		tab_headers=["Parameter", "Value"]
+		for conn_par in self.global_config.conn_pars:
+			if conn_par not in self.global_config.lst_skip:
+				tab_row=[conn_par, self.global_config.conn_pars[conn_par]]
+				tab_body.append(tab_row)
+		print(tabulate(tab_body, headers=tab_headers))
 			
-			self.sleep_loop = confdic["sleep_loop"]
-			self.pause_on_reindex = confdic["pause_on_reindex"]
-			self.sleep_on_reindex = confdic["sleep_on_reindex"]
-			self.reindex_app_names = confdic["reindex_app_names"]
-			self.batch_retention = confdic["batch_retention"]
-			
-			self.log_file = os.path.expanduser(confdic["log_dir"])+config_name+'.log'
-			self.pid_file = os.path.expanduser(confdic["pid_dir"])+"/"+config_name+".pid"
-			self.exit_file = os.path.expanduser(confdic["pid_dir"])+"/"+config_name+".lock"
-			copy_max_memory = str(confdic["copy_max_memory"])[:-1]
-			copy_scale = str(confdic["copy_max_memory"])[-1]
-			try:
-				int(copy_scale)
-				copy_max_memory = confdic["copy_max_memory"]
-			except:
-				if copy_scale =='k':
-					copy_max_memory = str(int(copy_max_memory)*1024)
-				elif copy_scale =='M':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024)
-				elif copy_scale =='G':
-					copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
-				else:
-					print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
-					sys.exit()
-			self.copy_max_memory = copy_max_memory
-		except KeyError as key_missing:
-			print('Missing key %s in configuration file. check %s/config-example.yaml for reference' % (key_missing, self.config_dir))
-			sys.exit()
-	
-	
-	def get_source_name(self, config_name = 'default'):
-		"""
-		The method tries to set the parameter source_name determined from the configuration file.
-		The value is used to query the replica catalog in order to get the source sstatus in method list_config().
 		
-		:param config_name: the configuration file to use. If omitted is set to default.
-		"""
-		
-		config_file = '%s/%s.yaml' % (self.config_dir, config_name)
-		self.config_name = config_name
-		if os.path.isfile(config_file):
-			conffile = open(config_file, 'rb')
-			confdic = yaml.load(conffile.read())
-			conffile.close()
-			try:
-				source_name=confdic["source_name"]
-			except:
-				print('FATAL - missing parameter source name in config file %s' % config_file)
-				source_name='NOT CONFIGURED'
-		return source_name
-		
-class replica_engine(object):
-	"""
-		This class is wraps the the mysql and postgresql engines in order to perform the various activities required for the replica. 
-		The constructor inits the global configuration class  and setup the mysql and postgresql engines as class objects. 
-		The class sets the logging using the configuration parameter.
-		
-	"""
-	def __init__(self, config, stdout=False):
-		"""
-			Class constructor
-		"""
-		self.lst_yes= ['yes',  'Yes', 'y', 'Y']
-		self.global_config=global_config(config)
-		self.logger = logging.getLogger(__name__)
-		self.logger.setLevel(logging.DEBUG)
-		self.logger.propagate = False
-		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s (%(lineno)s): %(message)s", "%b %e %H:%M:%S")
-		
-		if self.global_config.log_dest=='stdout' or stdout:
-			fh=logging.StreamHandler(sys.stdout)
-			
-		elif self.global_config.log_dest=='file':
-			if self.global_config.log_append:
-				file_mode='a'
-			else:
-				file_mode='w'
-			fh = logging.FileHandler(self.global_config.log_file, file_mode)
-		
-		if self.global_config.log_level=='debug':
-			fh.setLevel(logging.DEBUG)
-		elif self.global_config.log_level=='info':
-			fh.setLevel(logging.INFO)
-			
-		fh.setFormatter(formatter)
-		self.logger.addHandler(fh)
-
-		self.my_eng=mysql_engine(self.global_config, self.logger)
-		self.pg_eng=pg_engine(self.global_config, self.my_eng.my_tables, self.my_eng.table_file, self.logger, self.global_config.sql_dir)
-		self.sleep_loop=self.global_config.sleep_loop
-		
-		self.pid_file = self.global_config.pid_file
-		self.exit_file = self.global_config.exit_file
-	
-	def detach_replica(self):
-		"""
-			The method terminates the replica, remove the source from the table t_sources and resets the sequences in 
-			the postgresql database, leaving the replica snapshot capable to continue the activity directly on PostgreSQL
-		"""
-		source_name = self.global_config.source_name
-		drp_msg = 'Detaching the replica will remove any reference for the source %s.\n Are you sure? YES/No\n'  % source_name
-		if sys.version_info[0] == 3:
-			drop_src = input(drp_msg)
-		else:
-			drop_src = raw_input(drp_msg)
-		if drop_src == 'YES':
-			self.stop_replica(allow_restart=False)
-			self.pg_eng.reset_sequences(self.global_config.source_name)
-			self.pg_eng.drop_source(self.global_config.source_name)
-		elif drop_src in  self.lst_yes:
-			print('Please type YES all uppercase to confirm')
-		sys.exit()
-		
-		print('replica detached')
-	
-	
-	def init_replica(self):
-		"""
-			The method initialise a replica.
-		
-			It calls the pg_engine methods set_source_id which sets the source identifier and change the source status.
-			
-			The pg_engine method clean_batch_data is used to remove any unreplayed row in the tables t_log_replica_1(2).
-			
-			The class methods create_schema, copy_table_data and create_indices are called in sequence to initialise the replica.
-			
-		"""
-		self.pg_eng.set_source_id('initialising')
-		self.pg_eng.clean_batch_data()
-		self.create_schema()
-		self.copy_table_data()
-		self.create_indices()
-		self.pg_eng.set_source_id('initialised')
-
-	def wait_for_replica_end(self):
-		""" 
-			The method is used to wait for the replica's end monitoring the pid file.
-			The replica status is determined using the check_running method passing the write_pid=false.
-			
-			There is a 5 seconds sleep between each check.
-			
-		"""
-		self.logger.info("waiting for replica process to stop")
-		while True:
-			replica_running=self.check_running(write_pid=False)
-			if not replica_running:
-				break
-			time.sleep(5)
-		
-		self.logger.info("replica process stopped")
-	
-
-	def stop_replica(self, allow_restart=True):
-		"""
-			the method writes the exit file in the pid directory and waits for the replica process's end.
-			If allow_restart is true the exit file is removed.
-		"""
-		exit=open(self.exit_file, 'w')
-		exit.close()
-		self.wait_for_replica_end()
-		if allow_restart:
-			os.remove(self.exit_file)
-	
-	def enable_replica(self):
-		"""
-			The  method remove the exit file in order to let the replica start again.
-		"""
-		try:
-			os.remove(self.exit_file)
-			self.logger.info("Replica enabled")
-		except:
-			self.logger.info("Replica already enabled")
-			
-	def  create_schema(self):
-		"""
-			Creates the database schema on PostgreSQL using the metadata extracted from MySQL.
-		"""
-		self.pg_eng.create_schema()
-		self.logger.info("Importing mysql schema")
-		self.pg_eng.build_tab_ddl()
-		self.pg_eng.create_tables()
-	
-
-	
-	def  create_indices(self):
-		"""
-			Creates the indices on the PostgreSQL schema using the metadata extracted from MySQL.
-			
-		"""
-		self.pg_eng.build_idx_ddl()
-		self.pg_eng.create_indices()
-	
-	def create_service_schema(self):
-		"""
-			Creates the service schema sch_chameleon on the PostgreSQL database. The service schema is required for having the replica working correctly.
-	
-		"""
-		self.pg_eng.create_service_schema()
-		
-	def upgrade_service_schema(self):
-		"""
-			Upgrade the service schema to the latest version.
-			
-		"""
-		self.pg_eng.upgrade_service_schema()
-		
-	def drop_service_schema(self):
-		"""
-			Drops the service schema. The action discards any information relative to the replica.
-
-		"""
-		self.logger.info("Dropping the service schema")
-		self.pg_eng.drop_service_schema()
-		
-	def check_file_exit(self):
-		process_exit=False
-		"""checks for the exit file and terminate the replica if the file is present """
-		if os.path.isfile(self.exit_file):
-			if os.path.isfile(self.pid_file):
-				self.logger.info("exit file detected, removing the pid file and terminating the replica process")
-				os.remove(self.pid_file)
-			else:
-				self.logger.info("you shall remove the file %s before starting the replica process " % self.exit_file)
-			process_exit=True
-		return process_exit
-	
-	
-	def check_running(self, write_pid=False):
-		""" 
-			checks if the process is running. 
-			If swrite_pid is set to true and the replica is not running it saves the pid file.
-		"""
-		
-		process_running=False 
-		try:
-			file_pid=open(self.pid_file,'r')
-			pid=file_pid.read()
-			file_pid.close()
-			os.kill(int(pid),0)
-			process_running=True
-		except:
-			if write_pid:
-				pid=os.getpid()
-				file_pid=open(self.pid_file,'w')
-				file_pid.write(str(pid))
-				file_pid.close()
-			process_running=False
-		return process_running
-		
-	def run_replica(self):
-		"""
-			The method starts and run the replica loop. 
-			Before starting the loop checks if the replica is already running with check_running with write_pid=True.
-			
-			It also checks whether the exit file is present or not. 
-			If present skips the replica start, otherwise start the while loop which runs the mysql_engine method run_replica.
-			
-			When the mysql_engine.run_replica() completes it checks if there is the exit file and eventually exit the loop.
-			Otherwise sleeps for the amount or seconds set in sleep_loop.
-			
-		"""
-		already_running = self.check_running(write_pid=True)
-		exit_request = self.check_file_exit()
-		
-		if already_running:
-			sys.exit()
-		if exit_request:
-			self.pg_eng.set_source_id('stopped')
-			sys.exit()
-		
-		self.pg_eng.set_source_id('running')
-		while True:
-			self.my_eng.run_replica(self.pg_eng)
-			self.logger.info("batch complete. sleeping %s second(s)" % (self.sleep_loop, ))
-			if self.check_file_exit():
-				break
-			time.sleep(self.sleep_loop)
-		self.pg_eng.set_source_id('stopped')
-	
-	def list_config(self):
-		list_config = (os.listdir(self.global_config.config_dir))
-		print ("Available configurations")
-		print ("Config file\t\t\tName\t\tStatus\t\t" )
-		print ("==================================================================" )
-		for file in list_config:
-			lst_file = file.split('.')
-			file_name = lst_file[0]
-			file_ext = lst_file[1]
-			if file_ext == 'yaml' and file_name!='config-example':
-				source_name = self.global_config.get_source_name(file_name)
-				source_status = self.pg_eng.get_source_status(source_name)
-				
-				
-				print ("%s.yaml\t\t\t%s\t\t%s\t\t" % (file_name, source_name, source_status ))
-	
-	def show_status(self):
-		source_status=self.pg_eng.get_status()
-		print ("Config file\t\tDest schema\t\tStatus\t\tLag\t\tLast event" )
-		print ("=============================================================================================================" )
-			
-		for status in source_status:
-			source_name = status[0]
-			dest_schema = status[1]
-			source_status = status[2]
-			seconds_behind_master = status[3]
-			last_received_event = status[4]
-			print ("%s.yaml\t\t%s\t\t%s\t\t%s\t\t%s" % (source_name, dest_schema, source_status, seconds_behind_master, last_received_event ))
-	def add_source(self):
-		source_name=self.global_config.source_name
-		dest_schema=self.global_config.dest_schema
-		self.pg_eng.add_source(source_name, dest_schema)
-
-	def drop_source(self):
-		
-		source_name = self.global_config.source_name
-		drp_msg = 'Dropping the source %s will remove drop any replica reference.\n Are you sure? YES/No\n'  % source_name
-		if sys.version_info[0] == 3:
-			drop_src = input(drp_msg)
-		else:
-			drop_src = raw_input(drp_msg)
-		if drop_src == 'YES':
-			self.pg_eng.drop_source(self.global_config.source_name)
-		elif drop_src in  self.lst_yes:
-			print('Please type YES all uppercase to confirm')
-		sys.exit()
-		
-	def copy_table_data(self, truncate_tables=False):
-		"""
-			Copy the data for the replicated tables from mysql to postgres.
-			
-			After the copy the master's coordinates are saved in postgres.
-		"""
-		if truncate_tables:
-			self.pg_eng.truncate_tables()
-		self.my_eng.copy_table_data(self.pg_eng, self.global_config.copy_max_memory)
-		self.pg_eng.save_master_status(self.my_eng.master_status, cleanup=True)
-
-	def sync_replica(self, table):
-		self.stop_replica(allow_restart=False)
-		self.pg_eng.table_limit=table.split(',')
-		self.pg_eng.set_source_id('initialising')
-		self.pg_eng.get_index_def()
-		self.pg_eng.drop_src_indices()
-		self.pg_eng.truncate_tables()
-		self.copy_table_data()
-		self.pg_eng.create_src_indices()
-		self.pg_eng.set_source_id('initialised')
-		self.enable_replica()
-		
-class email_lib(object):
-	"""
-		class to manage email alerts sent in specific events.
-	"""
-	def __init__(self, config, logger):
-		self.config=config
-		self.smtp_server=None
-		self.logger=logger
-	
-	def connect_smtp(self):
-		self.logger.info("establishing connection with to SMTP server")
-		try:
-			self.smtp_server = smtplib.SMTP(self.config["smtp_host"], self.config["smtp_port"])
-			if self.config["smtp_tls"]:
-				self.smtp_server.starttls()
-			if self.config["smtp_login"]:
-				self.smtp_server.login(self.config["smtp_username"], self.config["smtp_password"])
-			
-		except:
-			self.logger.error("could not connect to the SMTP server")
-			self.smtp_server=None
-	
-		
-	def disconnect_smtp(self):
-		if self.smtp_server:
-			self.logger.info("disconnecting from SMTP server")
-			self.smtp_server.quit()
-	
-	def send_restarted_replica(self):
-		"""
-			sends the email when restarting the replica process
-		"""
-		self.connect_smtp()
-		self.disconnect_smtp()
-	
