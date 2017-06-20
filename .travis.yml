@@ -1,6 +1,6 @@
 sudo: true
 dist: trusty
-
+group: edge 
 language: python
 python:
   - "3.3"
