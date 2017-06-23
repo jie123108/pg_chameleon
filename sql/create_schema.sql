@@ -8,7 +8,7 @@ CREATE OR REPLACE VIEW sch_chameleon.v_version
 
 
 CREATE TYPE sch_chameleon.en_rep_status
-	AS ENUM ('registered', 'initialising','initialised','stopped','running');
+	AS ENUM ('registered', 'initialising','initialised','stopped','running','error');
 
 CREATE TYPE sch_chameleon.en_binlog_event 
 	AS ENUM ('delete', 'update', 'insert','ddl');
@@ -21,6 +21,7 @@ CREATE TABLE sch_chameleon.t_replica
 	t_dest_schema   text NOT NULL,
 	enm_status sch_chameleon.en_rep_status NOT NULL DEFAULT 'registered',
 	ts_last_event timestamp without time zone,
+	v_log_table character varying[] ,
 	CONSTRAINT pk_t_replica PRIMARY KEY (i_id_replica)
 )
 ;
@@ -41,7 +42,6 @@ CREATE TABLE sch_chameleon.t_replica_batch
   ts_created timestamp without time zone NOT NULL DEFAULT clock_timestamp(),
   ts_processed timestamp without time zone ,
   ts_replayed timestamp without time zone ,
-  v_log_table character varying(100) NOT NULL,
   i_replayed bigint NULL,
   i_skipped bigint NULL,
   i_ddl bigint NULL,
@@ -79,25 +79,6 @@ WITH (
   OIDS=FALSE
 );
 
-CREATE TABLE IF NOT EXISTS sch_chameleon.t_log_replica_1 
-(
-CONSTRAINT pk_log_replica_1 PRIMARY KEY (i_id_event),
-  CONSTRAINT fk_replica_batch_1 FOREIGN KEY (i_id_batch) 
-	REFERENCES  sch_chameleon.t_replica_batch (i_id_batch)
-	ON UPDATE RESTRICT ON DELETE CASCADE
-)
-INHERITS (sch_chameleon.t_log_replica)
-;
-
-CREATE TABLE IF NOT EXISTS sch_chameleon.t_log_replica_2
-(
-CONSTRAINT pk_log_replica_2 PRIMARY KEY (i_id_event),
-  CONSTRAINT fk_replica_batch_2 FOREIGN KEY (i_id_batch) 
-	REFERENCES  sch_chameleon.t_replica_batch (i_id_batch)
-	ON UPDATE RESTRICT ON DELETE CASCADE
-)
-INHERITS (sch_chameleon.t_log_replica)
-;
 
 CREATE TABLE sch_chameleon.t_replica_tables
 (
