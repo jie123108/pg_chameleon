@@ -43,6 +43,8 @@ class pg_connection(object):
 			The method disconnects from the database closing the connection.
 		"""
 		self.pgsql_conn.close()
+	
+	
 		
 
 class pg_engine(object):
@@ -90,6 +92,7 @@ class pg_engine(object):
 			'longblob':'bytea',
 			'blob':'bytea', 
 			'binary':'bytea', 
+			'varbinary':'bytea', 
 			'decimal':'numeric', 
 			'double':'double precision', 
 			'double precision':'double precision', 
@@ -98,13 +101,15 @@ class pg_engine(object):
 			'year':'integer', 
 			'enum':'enum', 
 			'set':'text', 
-			'json':'text'
+			'json':'text', 
+			'bool':'boolean', 
+			'boolean':'boolean', 
 		}
 		self.table_ddl = {}
 		self.idx_ddl = {}
 		self.type_ddl = {}
 		self.pg_charset = self.pg_conn.pg_charset
-		self.cat_version = '1.0'
+		self.cat_version = '1.3'
 		self.cat_sql = [
 			{'version':'base','script': 'create_schema.sql'}, 
 			{'version':'0.1','script': 'upgrade/cat_0.1.sql'}, 
@@ -117,6 +122,9 @@ class pg_engine(object):
 			{'version':'0.8','script': 'upgrade/cat_0.8.sql'}, 
 			{'version':'0.9','script': 'upgrade/cat_0.9.sql'}, 
 			{'version':'1.0','script': 'upgrade/cat_1.0.sql'}, 
+			{'version':'1.1','script': 'upgrade/cat_1.1.sql'}, 
+			{'version':'1.2','script': 'upgrade/cat_1.2.sql'}, 
+			{'version':'1.3','script': 'upgrade/cat_1.3.sql'}, 
 		]
 		cat_version=self.get_schema_version()
 		num_schema=(self.check_service_schema())[0]
@@ -124,6 +132,19 @@ class pg_engine(object):
 			self.upgrade_service_schema()
 		self.table_limit = ['*']
 	
+	def set_application_name(self, action=""):
+		"""
+			The method sets the application name in the replica using the variable self.pg_conn.global_conf.source_name,
+			Making simpler to find the replication processes. If the source name is not set then a generic PGCHAMELEON name is used.
+		"""
+		if self.pg_conn.global_conf.source_name:
+			app_name = "[PGCH] - source: %s, action: %s" % (self.pg_conn.global_conf.source_name, action)
+		else:
+			app_name = "[PGCH]"
+		sql_app_name="""SET application_name=%s; """
+		self.pg_conn.pgsql_cur.execute(sql_app_name, (app_name , ))
+	
+		
 	def add_source(self, source_name, dest_schema):
 		"""
 			The method add a new source in the replica catalogue. 
@@ -154,9 +175,27 @@ class pg_engine(object):
 					(
 						%s,
 						%s
-					); 
+					)
+				RETURNING 
+					i_id_source
+				; 
 			"""
 			self.pg_conn.pgsql_cur.execute(sql_add, (source_name, dest_schema ))
+			source_add = self.pg_conn.pgsql_cur.fetchone()
+			sql_update = """
+				UPDATE sch_chameleon.t_sources
+					SET v_log_table=ARRAY[
+						't_log_replica_1_src_%s',
+						't_log_replica_2_src_%s'
+					]
+				WHERE i_id_source=%s
+				;
+			"""
+			self.pg_conn.pgsql_cur.execute(sql_update,  (source_add[0],source_add[0], source_add[0] ))
+			
+			sql_parts = """SELECT sch_chameleon.fn_refresh_parts() ;"""
+			self.pg_conn.pgsql_cur.execute(sql_parts)
+			
 		else:
 			print("Source %s already registered." % source_name)
 		sys.exit()
@@ -204,8 +243,14 @@ class pg_engine(object):
 			:param source_name: The source name stored in the configuration parameter source_name.
 		"""
 		sql_delete = """ DELETE FROM sch_chameleon.t_sources 
-					WHERE  t_source=%s; """
+					WHERE  t_source=%s
+					RETURNING v_log_table
+					; """
 		self.pg_conn.pgsql_cur.execute(sql_delete, (source_name, ))
+		source_drop = self.pg_conn.pgsql_cur.fetchone()
+		for log_table in source_drop[0]:
+			sql_drop = """DROP TABLE sch_chameleon."%s"; """ % (log_table)
+			self.pg_conn.pgsql_cur.execute(sql_drop)
 	
 		
 	
@@ -453,9 +498,7 @@ class pg_engine(object):
 					column_type=enum_type
 				if column_type=="character varying" or column_type=="character":
 					column_type=column_type+"("+str(column["character_maximum_length"])+")"
-				if column_type=='numeric':
-					column_type=column_type+"("+str(column["numeric_precision"])+","+str(column["numeric_scale"])+")"
-				if column_type=='bit' or column_type=='float':
+				if column_type=='bit' or column_type=='float' or column_type=='numeric':
 					column_type=column_type+"("+str(column["numeric_precision"])+")"
 				if column["extra"]=="auto_increment":
 					column_type="bigserial"
@@ -513,11 +556,18 @@ class pg_engine(object):
 				script_schema=install["script"]
 				self.logger.info("script schema %s, detected schema version %s - install_script:%s " % (script_ver, cat_version, install_script))
 				if install_script==True:
+					sql_view="""
+					CREATE OR REPLACE VIEW sch_chameleon.v_version 
+						AS
+							SELECT %s::TEXT t_version
+					;"""
 					self.logger.info("Installing file version %s" % (script_ver, ))
 					file_schema=open(self.sql_dir+script_schema, 'rb')
 					sql_schema=file_schema.read()
 					file_schema.close()
 					self.pg_conn.pgsql_cur.execute(sql_schema)
+					self.pg_conn.pgsql_cur.execute(sql_view, (script_ver, ))
+					
 					if script_ver=='0.7':
 						sql_update="""
 							UPDATE sch_chameleon.t_sources
@@ -592,7 +642,7 @@ class pg_engine(object):
 				t_source,
 				t_dest_schema,
 				enm_status,
-				extract(epoch from now()-ts_last_event)::integer as i_seconds_behind_master,
+				 date_trunc('seconds',now())-ts_last_event lag,
 				ts_last_event 
 			FROM 
 				sch_chameleon.t_sources
@@ -624,61 +674,23 @@ class pg_engine(object):
 			:param cleanup: if true cleans the not replayed batches. This is useful when resyncing a replica.
 		"""
 		next_batch_id=None
-		sql_tab_log=""" 
-			SELECT 
-				CASE
-					WHEN v_log_table='t_log_replica_2'
-					THEN 
-						't_log_replica_1'
-					ELSE
-						't_log_replica_2'
-				END AS v_log_table
-			FROM
-				(
-					(
-						SELECT
-								v_log_table,
-								ts_created
-								
-						FROM
-								sch_chameleon.t_replica_batch
-						WHERE 
-							i_id_source=%s
-					)
-					UNION ALL
-					(
-						SELECT
-							't_log_replica_2'  AS v_log_table,
-							'1970-01-01'::timestamp as ts_created
-					)
-					ORDER BY 
-						ts_created DESC
-					LIMIT 1
-				) tab
-			;
-		"""
-		self.pg_conn.pgsql_cur.execute(sql_tab_log, (self.i_id_source, ))
-		results = self.pg_conn.pgsql_cur.fetchone()
-		table_file = results[0]
 		master_data = master_status[0]
 		binlog_name = master_data["File"]
 		binlog_position = master_data["Position"]
 		try:
-			event_time = datetime.datetime.fromtimestamp(master_data["Time"]).isoformat()
+			event_time = master_data["Time"]
 		except:
-			event_time  = None
-		self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+			event_time = None
+		
 		sql_master="""
 			INSERT INTO sch_chameleon.t_replica_batch
 				(
 					i_id_source,
 					t_binlog_name, 
-					i_binlog_position,
-					v_log_table
+					i_binlog_position
 				)
 			VALUES 
 				(
-					%s,
 					%s,
 					%s,
 					%s
@@ -690,11 +702,15 @@ class pg_engine(object):
 		sql_event="""
 			UPDATE sch_chameleon.t_sources 
 			SET 
-				ts_last_event=%s 
+				ts_last_event=to_timestamp(%s),
+				v_log_table=ARRAY[v_log_table[2],v_log_table[1]]
+				
 			WHERE 
 				i_id_source=%s
+			RETURNING v_log_table[1]
 			; 
 		"""
+		
 		self.logger.info("saving master data id source: %s log file: %s  log position:%s Last event: %s" % (self.i_id_source, binlog_name, binlog_position, event_time))
 		
 		
@@ -703,14 +719,19 @@ class pg_engine(object):
 				self.logger.info("cleaning not replayed batches for source %s", self.i_id_source)
 				sql_cleanup=""" DELETE FROM sch_chameleon.t_replica_batch WHERE i_id_source=%s AND NOT b_replayed; """
 				self.pg_conn.pgsql_cur.execute(sql_cleanup, (self.i_id_source, ))
-			self.pg_conn.pgsql_cur.execute(sql_master, (self.i_id_source, binlog_name, binlog_position, table_file))
+			self.pg_conn.pgsql_cur.execute(sql_master, (self.i_id_source, binlog_name, binlog_position))
 			results=self.pg_conn.pgsql_cur.fetchone()
 			next_batch_id=results[0]
 		except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
-					self.logger.error(self.pg_conn.pgsql_cur.mogrify(sql_master, (self.i_id_source, binlog_name, binlog_position, table_file)))
+					self.logger.error(self.pg_conn.pgsql_cur.mogrify(sql_master, (self.i_id_source, binlog_name, binlog_position)))
 		try:
 			self.pg_conn.pgsql_cur.execute(sql_event, (event_time, self.i_id_source, ))
+			results = self.pg_conn.pgsql_cur.fetchone()
+			table_file = results[0]
+			self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+		
+		
 			
 		except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
@@ -736,7 +757,7 @@ class pg_engine(object):
 						sch_chameleon.t_replica_batch  
 					WHERE 
 							NOT b_processed
-						AND NOT b_replayed
+						AND	NOT b_replayed
 						AND	i_id_source=%s
 				)
 			UPDATE sch_chameleon.t_replica_batch
@@ -745,15 +766,17 @@ class pg_engine(object):
 			FROM 
 				t_created
 			WHERE
-				t_replica_batch.ts_created=t_created.ts_created
+					t_replica_batch.ts_created=t_created.ts_created
+				AND	i_id_source=%s
 			RETURNING
 				i_id_batch,
 				t_binlog_name,
-				i_binlog_position ,
-				v_log_table
+				i_binlog_position,
+				(SELECT v_log_table[1] from sch_chameleon.t_sources WHERE i_id_source=%s) as v_log_table
+				
 			;
 		"""
-		self.pg_conn.pgsql_cur.execute(sql_batch, (self.i_id_source, ))
+		self.pg_conn.pgsql_cur.execute(sql_batch, (self.i_id_source, self.i_id_source, self.i_id_source, ))
 		return self.pg_conn.pgsql_cur.fetchall()
 	
 	def insert_batch(self,group_insert):
@@ -764,6 +787,7 @@ class pg_engine(object):
 			
 			:param group_insert: the event data built in mysql_engine
 		"""
+		
 		self.logger.debug("starting insert loop")
 		for row_data in group_insert:
 			global_data=row_data["global_data"]
@@ -837,7 +861,7 @@ class pg_engine(object):
 			:param group_insert: the event data built in mysql_engine
 		"""
 		csv_file=io.StringIO()
-		
+		self.set_application_name("writing batch")
 		insert_list=[]
 		for row_data in group_insert:
 			global_data=row_data["global_data"]
@@ -921,6 +945,7 @@ class pg_engine(object):
 			
 			
 		"""
+		self.set_application_name("replay batch")
 		batch_loop=True
 		sql_process="""SELECT sch_chameleon.fn_process_batch(%s,%s);"""
 		while batch_loop:
@@ -928,7 +953,7 @@ class pg_engine(object):
 			batch_result=self.pg_conn.pgsql_cur.fetchone()
 			batch_loop=batch_result[0]
 			self.logger.debug("Batch loop value %s" % (batch_loop))
-		self.logger.debug("Cleaning replayed batches older than %s" % (self.batch_retention))
+		self.logger.debug("Cleaning replayed batches older than %s for source %s" % (self.batch_retention,  self.i_id_source))
 		sql_cleanup="""
 			DELETE FROM 
 				sch_chameleon.t_replica_batch
@@ -937,9 +962,12 @@ class pg_engine(object):
 				AND b_processed
 				AND b_replayed
 				AND now()-ts_replayed>%s::interval
+				AND i_id_source=%s
 			;
 		"""
-		self.pg_conn.pgsql_cur.execute(sql_cleanup, (self.batch_retention, ))
+		self.set_application_name("cleanup old batches")
+		self.pg_conn.pgsql_cur.execute(sql_cleanup, (self.batch_retention, self.i_id_source ))
+		self.set_application_name("idle")
 
 	def add_foreign_keys(self, source_name, fk_metadata):
 		"""
