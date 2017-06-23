@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e 
 here=`dirname $0`
 chameleon.py set_config
 cp ${here}/test.yaml ~/.pg_chameleon/connection/ 
