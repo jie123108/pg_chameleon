@@ -155,7 +155,7 @@ class replica_engine(object):
 		self.set_config()
 		
 		
-	def set_config(self):
+	def set_config(self, args=None):
 		""" 
 			The method loops the list self.conf_dirs creating it only if missing.
 			
