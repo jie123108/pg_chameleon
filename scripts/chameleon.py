@@ -12,6 +12,7 @@ commands = [
 	'drop_replica', 
 	'init_replica', 
 	'set_config', 
+	'show_status', 
 	]
 command_help = """Available commands, """ + ','.join(commands)
 connection_help = """Specify the connection filename. If omitted defaults to config/connection.yaml"""

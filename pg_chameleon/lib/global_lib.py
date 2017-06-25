@@ -236,15 +236,11 @@ class replica_engine(object):
 			self.list_connections(args)
 		else:
 			replog = self.init_logger(args, 'stdout')
-			#keep_fds = [fh.stream.fileno()]
 			self.global_config.set_conn_vars(args.connkey)
-			#pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
 			self.pg_eng.conn_pars=self.global_config.conn_pars
 			self.pg_eng.logger=replog.logger
 			self.pg_eng.create_service_schema()
-			#daemon = Daemonize(app="test_app", pid=pid, action=self.pg_eng.create_service_schema, foreground=True, keep_fds=keep_fds)
-			#daemon.start()
-	
+			
 	def drop_service_schema(self, args):
 		
 		if args.connkey == 'all':
@@ -302,3 +298,29 @@ class replica_engine(object):
 		print(tabulate(tab_body, headers=tab_headers))
 			
 		
+	def show_status(self, args):
+		"""
+			list the replica status using the configuration files and the replica catalogue
+		"""
+		
+		if args.connkey == 'all':
+			print('You should specify a connection key')
+			self.list_connections(args)
+		else:
+			replog = self.init_logger(args, 'file')
+			self.global_config.set_conn_vars(args.connkey)
+			self.pg_eng.conn_pars=self.global_config.conn_pars
+			self.pg_eng.logger=replog.logger
+		replica_status=self.pg_eng.get_status()
+		tab_headers = ['Connection key',  'Destination schema',  'Status' ,  'Lag',  'Last received event']
+		tab_body = []
+			
+		for status in replica_status:
+			source_name = status[0]
+			dest_schema = status[1]
+			source_status = status[2]
+			lag = status[3]
+			last_received_event = status[4]
+			tab_row = [source_name, dest_schema, source_status, lag, last_received_event ]
+			tab_body.append(tab_row)
+		print(tabulate(tab_body, headers=tab_headers))

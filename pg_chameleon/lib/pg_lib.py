@@ -459,3 +459,29 @@ class pg_engine(object):
 			self.logger.error("replica %s is already registered " % connkey )
 			
 	
+	def get_status(self):
+		"""
+			The metod lists the sources with the running status and the eventual lag 
+			
+			:return: psycopg2 fetchall results 
+			:rtype: psycopg2 tuple
+		"""
+		self.connect_db()
+		self.set_autocommit(True)
+		
+		sql_status="""
+			SELECT
+				t_conn_key,
+				t_dest_schema,
+				enm_status,
+				 date_trunc('seconds',now())-ts_last_event lag,
+				ts_last_event 
+			FROM 
+				sch_chameleon.t_replica
+			ORDER BY 
+				t_replica
+		;
+		"""
+		self.pgsql_cur.execute(sql_status)
+		results = self.pgsql_cur.fetchall()
+		return results
