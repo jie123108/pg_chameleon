@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import argparse, sys
 from pg_chameleon import replica_engine
+
+
 commands = [
 	'list_connections',
 	'show_connection', 
@@ -25,7 +27,7 @@ parser.add_argument('--noprompt',  action='store_true',  required=False, help=co
 parser.add_argument('--debug',  action='store_true',  required=False, help=debug_help)
 args = parser.parse_args()
 
-replica = replica_engine(args.connfile)
+replica = replica_engine(args)
 
 try:
 	getattr(replica, args.command)(args)
@@ -34,7 +36,7 @@ try:
 #	print (e)
 except SystemExit:
 	pass
-except:
-	print ("Unexpected error:", sys.exc_info()[0])
+#except:
+#	print ("Unexpected error:", sys.exc_info()[0])
 	sys.exit(1)
 

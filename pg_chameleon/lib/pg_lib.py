@@ -71,100 +71,82 @@ class pg_engine(object):
 	def disconnect_db(self):
 		self.pgsql_conn.close()
 	
-	
 	def save_master_status(self, master_status, cleanup=False):
-		self.set_autocommit(True)
+		"""
+			This method saves the master data determining which log table should be used in the next batch.
+			
+			The method performs also a cleanup for the logged events the cleanup parameter is true.
+			
+			:param master_status: the master data with the binlogfile and the log position
+			:param cleanup: if true cleans the not replayed batches. This is useful when resyncing a replica.
+		"""
 		next_batch_id=None
-		sql_tab_log=""" 
-					SELECT 
-						CASE
-							WHEN v_log_table='t_log_replica_2'
-							THEN 
-								't_log_replica_1'
-							ELSE
-								't_log_replica_2'
-						END AS v_log_table
-					FROM
-						(
-							(
-							SELECT
-									v_log_table,
-									ts_created
-									
-							FROM
-									sch_chameleon.t_replica_batch
-							WHERE 
-								i_id_replica=%s
-							)
-							UNION ALL
-							(
-								SELECT
-									't_log_replica_2'  AS v_log_table,
-									'1970-01-01'::timestamp as ts_created
-							)
-							ORDER BY 
-								ts_created DESC
-							LIMIT 1
-						) tab
-				;
-					"""
-		self.pgsql_cur.execute(sql_tab_log, (self.i_id_replica, ))
-		results = self.pgsql_cur.fetchone()
-		table_file = results[0]
 		master_data = master_status[0]
 		binlog_name = master_data["File"]
 		binlog_position = master_data["Position"]
 		try:
-			event_time = datetime.datetime.fromtimestamp(master_data["Time"]).isoformat()
+			event_time = master_data["Time"]
 		except:
-			event_time  = None
-		self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+			event_time = None
+		
 		sql_master="""
-					INSERT INTO sch_chameleon.t_replica_batch
-													(
-														i_id_replica,
-														t_binlog_name, 
-														i_binlog_position,
-														v_log_table
-													)
-										VALUES (
-														%s,
-														%s,
-														%s,
-														%s
-													)
-					RETURNING i_id_batch
-					;
-				"""
+			INSERT INTO sch_chameleon.t_replica_batch
+				(
+					i_id_replica,
+					t_binlog_name, 
+					i_binlog_position
+				)
+			VALUES 
+				(
+					%s,
+					%s,
+					%s
+				)
+			RETURNING i_id_batch
+			;
+		"""
 						
-		sql_event="""UPDATE sch_chameleon.t_replica
-					SET 
-						ts_last_event=%s 
-					WHERE 
-						i_id_replica=%s; 
-						"""
-		self.logger.debug("saving master data id replica: %s log file: %s  log position:%s Last event: %s" % (self.i_id_replica, binlog_name, binlog_position, event_time))
+		sql_event="""
+			UPDATE sch_chameleon.t_replica 
+			SET 
+				ts_last_event=to_timestamp(%s),
+				v_log_table=ARRAY[v_log_table[2],v_log_table[1]]
+				
+			WHERE 
+				i_id_replica=%s
+			RETURNING v_log_table[1]
+			; 
+		"""
+		
+		self.logger.info("saving master data id source: %s log file: %s  log position:%s Last event: %s" % (self.i_id_replica, binlog_name, binlog_position, event_time))
 		
 		
 		try:
 			if cleanup:
-				self.logger.info("cleaning not replayed batches for replica %s", self.i_id_replica)
+				self.logger.info("cleaning not replayed batches for source %s", self.i_id_replica)
 				sql_cleanup=""" DELETE FROM sch_chameleon.t_replica_batch WHERE i_id_replica=%s AND NOT b_replayed; """
 				self.pgsql_cur.execute(sql_cleanup, (self.i_id_replica, ))
-			self.pgsql_cur.execute(sql_master, (self.i_id_replica, binlog_name, binlog_position, table_file))
+			self.pgsql_cur.execute(sql_master, (self.i_id_replica, binlog_name, binlog_position))
 			results=self.pgsql_cur.fetchone()
 			next_batch_id=results[0]
 		except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
-					self.logger.error(self.pgsql_cur.mogrify(sql_master, (self.i_id_replica, binlog_name, binlog_position, table_file)))
+					self.logger.error(self.pgsql_cur.mogrify(sql_master, (self.i_id_replica, binlog_name, binlog_position)))
 		try:
 			self.pgsql_cur.execute(sql_event, (event_time, self.i_id_replica, ))
+			results = self.pgsql_cur.fetchone()
+			table_file = results[0]
+			self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+		
+		
 			
 		except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
-					self.pgsql_cur.mogrify(sql_event, (event_time, self.i_id_replica, ))
+					self.pg_conn.mogrify(sql_event, (event_time, self.i_id_replica, ))
 		
 		return next_batch_id
+			
+	
 	
 	def clean_batch_data(self):
 		self.set_autocommit(True)
@@ -409,10 +391,19 @@ class pg_engine(object):
 		self.connect_db()
 		self.set_autocommit(True)
 		connkey = self.conn_pars["connkey"]	
-		sql_delete = """ DELETE FROM sch_chameleon.t_replica
-				WHERE  t_conn_key=%s; """
+		sql_delete = """
+			DELETE FROM sch_chameleon.t_replica
+			WHERE  
+				t_conn_key=%s
+			RETURNING v_log_table	
+		;"""
+		
 		self.logger.info("removing replica %s from the replica catalogue" % connkey )
 		self.pgsql_cur.execute(sql_delete, (connkey, ))
+		logtable_drop = self.pgsql_cur.fetchone()
+		for log_table in logtable_drop[0]:
+			sql_drop = """DROP TABLE sch_chameleon."%s"; """ % (log_table)
+			self.pgsql_cur.execute(sql_drop)
 
 	def add_replica(self):
 		self.connect_db()
@@ -434,11 +425,36 @@ class pg_engine(object):
 		cnt_rep= rep_data [0]
 		if cnt_rep== 0:
 			self.logger.info("adding replica %s to the replica catalogue " % connkey )
-			sql_add = """INSERT INTO sch_chameleon.t_replica
-						( t_conn_key,t_dest_schema) 
-					VALUES 
-						(%s,%s); """
+			sql_add = """
+				INSERT INTO sch_chameleon.t_replica
+					( 
+						t_conn_key,
+						t_dest_schema
+					) 
+				VALUES 
+					(
+						%s,
+						%s
+					)
+
+				RETURNING
+					i_id_replica
+				;
+						"""
 			self.pgsql_cur.execute(sql_add, (connkey, dest_schema ))
+			replica_add = self.pgsql_cur.fetchone()
+			sql_update = """
+				UPDATE sch_chameleon.t_replica
+					SET v_log_table=ARRAY[
+						't_log_replica_1_src_%s',
+						't_log_replica_2_src_%s'
+					]
+				WHERE i_id_replica=%s
+				;
+			"""
+			self.pgsql_cur.execute(sql_update,  (replica_add[0],replica_add[0], replica_add[0] ))
+			sql_parts = """SELECT sch_chameleon.fn_refresh_parts() ;"""
+			self.pgsql_cur.execute(sql_parts)
 		else:
 			self.logger.error("replica %s is already registered " % connkey )
 			

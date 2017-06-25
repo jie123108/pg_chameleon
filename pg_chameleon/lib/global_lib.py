@@ -3,18 +3,18 @@ import sys
 import os
 from tabulate import tabulate
 import logging
+from logging.handlers  import TimedRotatingFileHandler
 from pg_chameleon import pg_engine, mysql_engine
 from daemonize import Daemonize
 from distutils.sysconfig import get_python_lib
 from shutil import copy
 
-	
 		
 class replica_logging(object):
 	def __init(self):
 		self.logger=None
 
-	def init_logger(self, log_dest,log_level,log_append, log_dir, connkey):
+	def init_logger(self, log_dest,log_level,log_days_keep, log_dir, connkey, debug_mode):
 		"""
 			
 		"""
@@ -25,17 +25,13 @@ class replica_logging(object):
 		self.logger.propagate = False
 		formatter = logging.Formatter("%(asctime)s: [%(levelname)s] - %(filename)s (%(lineno)s): %(message)s", "%b %e %H:%M:%S")
 		
-		if log_dest=='stdout':
+		if log_dest=='stdout' or debug_mode:
 			fh=logging.StreamHandler(sys.stdout)
 			
 		elif log_dest=='file':
-			if log_append:
-				file_mode='a'
-			else:
-				file_mode='w'
-			fh = logging.FileHandler(log_file, file_mode)
+			fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
 		
-		if log_level=='debug':
+		if log_level=='debug' or debug_mode:
 			fh.setLevel(logging.DEBUG)
 		elif log_level=='info':
 			fh.setLevel(logging.INFO)
@@ -75,7 +71,7 @@ class global_config(object):
 		
 	def set_log_kwargs(self, connkey = "all"):
 		self.load_connection()
-		log_pars = ['log_dest','log_level','log_append', 'log_dir']
+		log_pars = ['log_dest','log_level','log_days_keep', 'log_dir']
 		for par in log_pars:
 			self.log_kwargs[par] = self.conn_pars[par]
 		self.log_kwargs["connkey"] = connkey
@@ -105,8 +101,6 @@ class global_config(object):
 			self.conn_pars["connections"] = None
 			for key in self.currentconn:
 				self.conn_pars[key] = self.currentconn[key]
-				if key not in self.lst_skip:
-					print('Override value key %s to %s' % (key, self.currentconn[key]))
 			self.set_copy_max_memory()	
 			self.conn_pars["pid_dir"] = os.path.expanduser(self.conn_pars["pid_dir"])
 			self.conn_pars["log_dir"] = os.path.expanduser(self.conn_pars["log_dir"])
@@ -137,8 +131,8 @@ class global_config(object):
 		
 
 class replica_engine(object):
-	def __init__(self, conn_file):
-		self.global_config = global_config(conn_file)
+	def __init__(self, args):
+		self.global_config = global_config(args.connfile)
 		self.pg_eng = pg_engine()
 		self.my_eng = mysql_engine()
 		self.lst_yes = ['yes',  'Yes', 'y', 'Y']
@@ -157,10 +151,11 @@ class replica_engine(object):
 			local_pid, 
 			
 		]
+		self.args = args
+		self.set_config()
 		
 		
-		
-	def set_config(self, args):
+	def set_config(self):
 		""" 
 			The method loops the list self.conf_dirs creating it only if missing.
 			
@@ -170,6 +165,7 @@ class replica_engine(object):
 			If the configuration file is missing the method copies the file with a different message.
 		
 		"""
+
 		for confdir in self.conf_dirs:
 			if not os.path.isdir(confdir):
 				print ("creating directory %s" % confdir)
@@ -189,6 +185,7 @@ class replica_engine(object):
 		replog = replica_logging()
 		if log_dest:
 			self.global_config.log_kwargs["log_dest"] = log_dest
+		self.global_config.log_kwargs["debug_mode"] = args.debug
 		self.fh = replog.init_logger(**self.global_config.log_kwargs)
 		return replog
 	

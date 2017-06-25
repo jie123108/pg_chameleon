@@ -1,5 +1,6 @@
 ---
 replica_batch_size: 1000
+batch_retention: '1 day'
 copy_max_memory: 300M
 copy_mode: 'file'
 hexify: 
@@ -8,6 +9,7 @@ hexify:
     - 'mediumblob'
     - 'longblob'
     - 'binary'
+    - 'varbinary'
 
  
 pid_dir: '~/.pg_chameleon/pid/'
@@ -15,7 +17,7 @@ log_dir: '~/.pg_chameleon/logs/'
 
 log_level: 'debug'
 log_dest: 'file'
-log_append: True
+log_days_keep: 10
 #seconds between each replica loop
 sleep_loop: 10 
 
