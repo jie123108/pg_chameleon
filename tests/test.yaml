@@ -40,7 +40,7 @@ connections:
         user: usr_test
         passwd: test
         replica_slot: 100
-        replica_database:  db_test
+        replica_database:  sakila
         src_schema: #if type is mysql should be the database to replicate from
         my_charset: 'utf8'
         type: 'mysql' #currently only mysql is supported
@@ -52,5 +52,5 @@ connections:
         password: test
         pg_database: db_test
         pg_charset: 'utf8'
-        destination_schema: sch_test
+        destination_schema: sch_sakila
     
