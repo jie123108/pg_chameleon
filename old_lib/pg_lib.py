@@ -96,7 +96,7 @@ class pg_engine(object):
 			'decimal':'numeric', 
 			'double':'double precision', 
 			'double precision':'double precision', 
-			'float':'float', 
+			'float':'double precision', 
 			'bit':'integer', 
 			'year':'integer', 
 			'enum':'enum', 
@@ -104,12 +104,13 @@ class pg_engine(object):
 			'json':'text', 
 			'bool':'boolean', 
 			'boolean':'boolean', 
+			'geometry':'bytea',
 		}
 		self.table_ddl = {}
 		self.idx_ddl = {}
 		self.type_ddl = {}
 		self.pg_charset = self.pg_conn.pg_charset
-		self.cat_version = '1.3'
+		self.cat_version = '1.5'
 		self.cat_sql = [
 			{'version':'base','script': 'create_schema.sql'}, 
 			{'version':'0.1','script': 'upgrade/cat_0.1.sql'}, 
@@ -125,12 +126,15 @@ class pg_engine(object):
 			{'version':'1.1','script': 'upgrade/cat_1.1.sql'}, 
 			{'version':'1.2','script': 'upgrade/cat_1.2.sql'}, 
 			{'version':'1.3','script': 'upgrade/cat_1.3.sql'}, 
+			{'version':'1.4','script': 'upgrade/cat_1.4.sql'},
+			{'version':'1.5','script': 'upgrade/cat_1.5.sql'},
 		]
 		cat_version=self.get_schema_version()
 		num_schema=(self.check_service_schema())[0]
 		if cat_version!=self.cat_version and int(num_schema)>0:
 			self.upgrade_service_schema()
 		self.table_limit = ['*']
+		self.master_status = None
 	
 	def set_application_name(self, action=""):
 		"""
@@ -276,6 +280,7 @@ class pg_engine(object):
 		try:
 			self.i_id_source = source_data[0]
 			self.dest_schema = source_data[1]
+			self.source_name = source_name
 		except:
 			print("Source %s is not registered." % source_name)
 			sys.exit()
@@ -300,10 +305,9 @@ class pg_engine(object):
 		"""
 		sql_drop="DROP SCHEMA IF EXISTS "+self.dest_schema+" CASCADE;"
 		sql_create=" CREATE SCHEMA IF NOT EXISTS "+self.dest_schema+";"
-		sql_path=" SET search_path="+self.dest_schema+";"
 		self.pg_conn.pgsql_cur.execute(sql_drop)
 		self.pg_conn.pgsql_cur.execute(sql_create)
-		self.pg_conn.pgsql_cur.execute(sql_path)
+		self.set_search_path()
 	
 	def store_table(self, table_name):
 		"""
@@ -313,33 +317,75 @@ class pg_engine(object):
 			A table without primary key is copied and the indices are create like any other table. 
 			However the replica doesn't work for the tables without primary key.
 			
+			If the class variable master status is set then the master's coordinates are saved along with the table.
+			This happens in general when a table is added to the replica or the data is refreshed with sync_tables.
+			
 			:param table_name: the table name to store in the table  t_replica_tables
 		"""
+		if self.master_status:
+			master_data = self.master_status[0]
+			binlog_file = master_data["File"]
+			binlog_pos = master_data["Position"]
+		else:
+			binlog_file = None
+			binlog_pos = None
 		table_data=self.table_metadata[table_name]
+		table_no_pk = True
 		for index in table_data["indices"]:
 			if index["index_name"]=="PRIMARY":
+				table_no_pk = False
 				sql_insert=""" 
 					INSERT INTO sch_chameleon.t_replica_tables 
 						(
 							i_id_source,
 							v_table_name,
 							v_schema_name,
-							v_table_pkey
+							v_table_pkey,
+							t_binlog_name,
+							i_binlog_position
 						)
 					VALUES 
 						(
 							%s,
 							%s,
 							%s,
-							ARRAY[%s]
+							ARRAY[%s],
+							%s,
+							%s
 						)
 					ON CONFLICT (i_id_source,v_table_name,v_schema_name)
 						DO UPDATE 
-							SET v_table_pkey=EXCLUDED.v_table_pkey
+							SET 
+								v_table_pkey=EXCLUDED.v_table_pkey,
+								t_binlog_name = EXCLUDED.t_binlog_name,
+								i_binlog_position = EXCLUDED.i_binlog_position
 										;
 								"""
-				self.pg_conn.pgsql_cur.execute(sql_insert, (self.i_id_source, table_name, self.dest_schema, index["index_columns"].strip()))	
-	
+				self.pg_conn.pgsql_cur.execute(sql_insert, (
+					self.i_id_source, 
+					table_name, 
+					self.dest_schema, 
+					index["index_columns"].strip(), 
+					binlog_file, 
+					binlog_pos
+					)
+				)
+		if table_no_pk:
+			self.logger.warning("Missing primary key. The table %s will not be replicated." % (table_name,))
+			sql_delete = """
+				DELETE FROM sch_chameleon.t_replica_tables
+				WHERE
+						i_id_source=%s
+					AND	v_table_name=%s
+					AND	v_schema_name=%s
+				;
+			"""
+			self.pg_conn.pgsql_cur.execute(sql_delete, (
+				self.i_id_source, 
+				table_name, 
+				self.dest_schema)
+				)
+			
 	def unregister_table(self, table_name):
 		"""
 			This method is used when a table have the primary key dropped on MySQL. 
@@ -364,12 +410,34 @@ class pg_engine(object):
 		self.logger.debug(sql_rename)
 		self.pg_conn.pgsql_cur.execute(sql_rename)	
 	
+	
+	def set_search_path(self):
+		"""
+			The method sets the search path for the connection.
+		"""
+		sql_path=" SET search_path=%s;" % (self.dest_schema, )
+		self.pg_conn.pgsql_cur.execute(sql_path)
+		
+	
+	def drop_tables(self):
+		"""
+			The method drops the tables present in the table_ddl
+		"""
+		self.set_search_path()
+		for table in self.table_ddl:
+			self.logger.debug("dropping table %s " % (table, ))
+			sql_drop = """DROP TABLE IF EXISTS "%s"  CASCADE;""" % (table, )
+			self.pg_conn.pgsql_cur.execute(sql_drop)
+			
+	
 	def create_tables(self):
 		"""
 			The method loops trough the list table_ddl and executes the creation scripts.
 			No index is created in this method
 		"""
+		self.set_search_path()
 		for table in self.table_ddl:
+			self.logger.debug("creating table %s " % (table, ))
 			try:
 				ddl_enum=self.type_ddl[table]
 				for sql_type in ddl_enum:
@@ -384,6 +452,7 @@ class pg_engine(object):
 			except psycopg2.Error as e:
 				self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
 				self.logger.error(sql_create)
+				
 			self.store_table(table)
 
 	def create_indices(self):
@@ -439,6 +508,11 @@ class pg_engine(object):
 			except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
 					self.logger.error(self.pg_conn.pgsql_cur.mogrify(sql_head,column_values))
+			except:
+				self.logger.error("unexpected error when processing the row")
+				self.logger.error(" - > Table: %s" % table)
+				self.logger.error(" - > Insert list: %s" % (','.join(column_copy)) )
+				self.logger.error(" - > Insert values: %s" % (column_values) )
 	
 	def build_idx_ddl(self):
 		""" 
@@ -474,8 +548,17 @@ class pg_engine(object):
 		""" 
 			The method iterates over the list l_tables and builds a new list with the statements for tables
 		"""
+		if self.table_limit[0] != '*' :
+			table_metadata = {}
+			for tab in self.table_limit:
+				try:
+					table_metadata[tab] = self.table_metadata[tab]
+				except:
+					pass
+		else:
+			table_metadata = self.table_metadata
 		
-		for table_name in self.table_metadata:
+		for table_name in table_metadata:
 			table=self.table_metadata[table_name]
 			columns=table["columns"]
 			
@@ -498,8 +581,8 @@ class pg_engine(object):
 					column_type=enum_type
 				if column_type=="character varying" or column_type=="character":
 					column_type=column_type+"("+str(column["character_maximum_length"])+")"
-				if column_type=='bit' or column_type=='float' or column_type=='numeric':
-					column_type=column_type+"("+str(column["numeric_precision"])+")"
+				if column_type=='numeric':
+					column_type=column_type+"("+str(column["numeric_precision"])+","+str(column["numeric_scale"])+")"
 				if column["extra"]=="auto_increment":
 					column_type="bigserial"
 				ddl_columns.append('"'+column["column_name"]+'" '+column_type+" "+col_is_null )
@@ -707,11 +790,13 @@ class pg_engine(object):
 				
 			WHERE 
 				i_id_source=%s
-			RETURNING v_log_table[1]
+			RETURNING 
+				v_log_table[1],
+				ts_last_event
 			; 
 		"""
 		
-		self.logger.info("saving master data id source: %s log file: %s  log position:%s Last event: %s" % (self.i_id_source, binlog_name, binlog_position, event_time))
+		
 		
 		
 		try:
@@ -728,8 +813,13 @@ class pg_engine(object):
 		try:
 			self.pg_conn.pgsql_cur.execute(sql_event, (event_time, self.i_id_source, ))
 			results = self.pg_conn.pgsql_cur.fetchone()
-			table_file = results[0]
-			self.logger.debug("master data: table file %s, log name: %s, log position: %s " % (table_file, binlog_name, binlog_position))
+			log_table_name = results[0]
+			db_event_time = results[1]
+			self.logger.info("Saved master data for source: %s" %(self.source_name, ) )
+			self.logger.debug("Binlog file: %s" % (binlog_name, ))
+			self.logger.debug("Binlog position:%s" % (binlog_position, ))
+			self.logger.debug("Last event: %s" % (db_event_time, ))
+			self.logger.debug("Next log table name: %s" % ( log_table_name, ))
 		
 		
 			
@@ -948,12 +1038,17 @@ class pg_engine(object):
 		self.set_application_name("replay batch")
 		batch_loop=True
 		sql_process="""SELECT sch_chameleon.fn_process_batch(%s,%s);"""
+		self.logger.info("Replaying batch for source %s replay size %s rows" % ( self.source_name, replica_batch_size))
 		while batch_loop:
 			self.pg_conn.pgsql_cur.execute(sql_process, (replica_batch_size, self.i_id_source))
 			batch_result=self.pg_conn.pgsql_cur.fetchone()
 			batch_loop=batch_result[0]
-			self.logger.debug("Batch loop value %s" % (batch_loop))
-		self.logger.debug("Cleaning replayed batches older than %s for source %s" % (self.batch_retention,  self.i_id_source))
+			if batch_loop:
+				self.logger.info("Still working on batch for source  %s replay size %s rows" % (self.source_name, replica_batch_size ))
+			else:
+				self.logger.info("Batch replay for source %s is complete" % (self.source_name))
+			
+		self.logger.debug("Cleanup for replayed batches older than %s for source %s" % (self.batch_retention,  self.source_name))
 		sql_cleanup="""
 			DELETE FROM 
 				sch_chameleon.t_replica_batch
@@ -1076,7 +1171,124 @@ class pg_engine(object):
 		except:
 			pass
 	
+	def  generate_default_statements(self, table, column, create_column=None):
+		"""
+			The method gets the default value associated with the table and column removing the cast.
+			:param table: The table name
+			:param table: The column name
+			:return: the statements for dropping and creating default value on the affected table
+			:rtype: dictionary
+		"""
+		if not create_column:
+			create_column = column
+		
+		regclass = """ "%s"."%s" """ %(self.dest_schema, table)
+		sql_def_val = """
+			SELECT 
+				(
+					SELECT 
+						split_part(substring(pg_catalog.pg_get_expr(d.adbin, d.adrelid) for 128),'::',1)
+					FROM 
+						pg_catalog.pg_attrdef d
+					WHERE 
+							d.adrelid = a.attrelid 
+						AND d.adnum = a.attnum 
+						AND a.atthasdef
+				) as default_value
+				FROM 
+					pg_catalog.pg_attribute a
+				WHERE 
+						a.attrelid = %s::regclass 
+					AND a.attname=%s 
+					AND NOT a.attisdropped
+			;
 
+		"""
+		self.pg_conn.pgsql_cur.execute(sql_def_val, (regclass, column ))
+		default_value = self.pg_conn.pgsql_cur.fetchone()
+		if default_value[0]:
+			query_drop_default = """ ALTER TABLE  "%s" ALTER COLUMN "%s" DROP DEFAULT;""" % (table, column)
+			query_add_default = """ ALTER TABLE  "%s" ALTER COLUMN "%s" SET DEFAULT %s ; """ % (table, create_column, default_value[0])
+		else:
+			query_drop_default = ""
+			query_add_default = ""
+				
+		return {'drop':query_drop_default, 'create':query_add_default}
+
+	def build_enum_ddl(self, enm_dic):
+		"""
+			The method builds the enum DDL using the token data. 
+			The postgresql system catalog  is queried to determine whether the enum exists and needs to be altered.
+			The alter is not written in the replica log table but executed as single statement as PostgreSQL do not allow the alter being part of a multi command
+			SQL.
+			
+			:param enm_dic: a dictionary with the enumeration details
+			:return: a dictionary with the pre_alter and post_alter statements (e.g. pre alter create type , post alter drop type)
+			:rtype: dictionary
+		"""
+		#enm_dic = {'table':table_name, 'column':column_name, 'type':column_type, 'enum_list': enum_list}
+		enum_name="enum_%s_%s" % (enm_dic['table'], enm_dic['column'])
+		
+		sql_check_enum = """
+			SELECT 
+				typ.typcategory,
+				typ.typname,
+				sch_typ.nspname as typschema,
+				CASE 
+					WHEN typ.typcategory='E'
+					THEN
+					(
+						SELECT 
+							array_agg(enumlabel) 
+						FROM 
+							pg_enum 
+						WHERE 
+							enumtypid=typ.oid
+					)
+				END enum_list
+			FROM
+				pg_type typ
+				INNER JOIN pg_namespace sch_typ
+					ON  sch_typ.oid = typ.typnamespace
+
+			WHERE
+					sch_typ.nspname=%s
+				AND	typ.typname=%s
+			;
+		"""
+		self.pg_conn.pgsql_cur.execute(sql_check_enum, (self.dest_schema,  enum_name))
+		type_data=self.pg_conn.pgsql_cur.fetchone()
+		return_dic = {}
+		pre_alter = ""
+		post_alter = ""
+		column_type = enm_dic["type"]
+		self.logger.debug(enm_dic)
+		if type_data:
+			if type_data[0] == 'E' and enm_dic["type"] == 'enum':
+				self.logger.debug('There is already the enum %s, altering the type')
+				new_enums = [val.strip() for val in enm_dic["enum_list"] if val.strip() not in type_data[3]]
+				sql_add = []
+				for enumeration in  new_enums:
+					sql_add =  """ALTER TYPE "%s"."%s" ADD VALUE '%s';""" % (type_data[2], enum_name, enumeration) 
+					self.pg_conn.pgsql_cur.execute(sql_add)
+				column_type = enum_name
+			elif type_data[0] != 'E' and enm_dic["type"] == 'enum':
+				self.logger.debug('The column will be altered in enum, creating the type')
+				pre_alter = "CREATE TYPE \"%s\" AS ENUM (%s);" % (enum_name, enm_dic["enum_elements"])
+				column_type = enum_name
+			elif type_data[0] == 'E' and enm_dic["type"] != 'enum':
+				self.logger.debug('The column is no longer an enum, dropping the type')
+				post_alter = "DROP TYPE \"%s\" " % (enum_name)
+		elif not type_data and enm_dic["type"] == 'enum':
+				self.logger.debug('Creating a new enumeration type %s' % (enum_name))
+				pre_alter = "CREATE TYPE \"%s\" AS ENUM (%s);" % (enum_name, enm_dic["enum_elements"])
+				column_type = enum_name
+
+		return_dic["column_type"] = column_type
+		return_dic["pre_alter"] = pre_alter
+		return_dic["post_alter"]  = post_alter
+		return return_dic
+		
 	def build_alter_table(self, token):
 		""" 
 			The method builds the alter table statement from the token data.
@@ -1097,53 +1309,85 @@ class pg_engine(object):
 			:rtype: string
 			
 		"""
-		alter_cmd=[]
-		ddl_enum=[]
+		alter_cmd = []
+		ddl_enum = []
+		ddl_pre_alter = []
+		ddl_post_alter = []
+			
 		query_cmd=token["command"]
 		table_name=token["name"]
 		for alter_dic in token["alter_cmd"]:
 			if alter_dic["command"] == 'DROP':
 				alter_cmd.append("%(command)s %(name)s CASCADE" % alter_dic)
 			elif alter_dic["command"] == 'ADD':
-				column_type=self.type_dictionary[alter_dic["type"]]
-				if column_type=="enum":
-					enum_name="enum_"+table_name+"_"+alter_dic["name"]
-					column_type=enum_name
-					sql_drop_enum='DROP TYPE IF EXISTS '+column_type+' CASCADE;'
-					sql_create_enum="CREATE TYPE "+column_type+" AS ENUM ("+alter_dic["dimension"]+");"
-					ddl_enum.append(sql_drop_enum)
-					ddl_enum.append(sql_create_enum)
-				if column_type=="character varying" or column_type=="character" or column_type=='numeric' or column_type=='bit' or column_type=='float':
+				column_type = self.type_dictionary[alter_dic["type"]]
+				column_name = alter_dic["name"]
+				enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
+				enm_dic = {'table':table_name, 'column':column_name, 'type':column_type, 'enum_list': enum_list, 'enum_elements':alter_dic["dimension"]}
+				enm_alter = self.build_enum_ddl(enm_dic)
+				ddl_pre_alter.append(enm_alter["pre_alter"])
+				ddl_post_alter.append(enm_alter["post_alter"])
+				column_type= enm_alter["column_type"]
+				if 	column_type in ["character varying", "character", 'numeric', 'bit', 'float']:
 						column_type=column_type+"("+str(alter_dic["dimension"])+")"
-				alter_cmd.append("%s \"%s\" %s NULL" % (alter_dic["command"], alter_dic["name"], column_type))	
+				if alter_dic["default"]:
+					default_value = "DEFAULT %s" % alter_dic["default"]
+				else:
+					default_value=""
+				alter_cmd.append("%s \"%s\" %s NULL %s" % (alter_dic["command"], column_name, column_type, default_value))	
 			elif alter_dic["command"] == 'CHANGE':
 				sql_rename = ""
 				sql_type = ""
 				old_column=alter_dic["old"]
 				new_column=alter_dic["new"]
+				column_name = old_column
+				enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
+				
 				column_type=self.type_dictionary[alter_dic["type"]]
+				default_sql = self.generate_default_statements(table_name, old_column, new_column)
+				enm_dic = {'table':table_name, 'column':column_name, 'type':column_type, 'enum_list': enum_list, 'enum_elements':alter_dic["dimension"]}
+				enm_alter = self.build_enum_ddl(enm_dic)
+
+				ddl_pre_alter.append(enm_alter["pre_alter"])
+				ddl_pre_alter.append(default_sql["drop"])
+				ddl_post_alter.append(enm_alter["post_alter"])
+				ddl_post_alter.append(default_sql["create"])
+				column_type= enm_alter["column_type"]
+				
 				if column_type=="character varying" or column_type=="character" or column_type=='numeric' or column_type=='bit' or column_type=='float':
 						column_type=column_type+"("+str(alter_dic["dimension"])+")"
 				sql_type = """ALTER TABLE "%s" ALTER COLUMN "%s" SET DATA TYPE %s  USING "%s"::%s ;;""" % (table_name, old_column, column_type, old_column, column_type)
 				if old_column != new_column:
 					sql_rename="""ALTER TABLE  "%s" RENAME COLUMN "%s" TO "%s" ;""" % (table_name, old_column, new_column)
-				query=sql_type+sql_rename
+					
+				query = ' '.join(ddl_pre_alter)
+				query += sql_type+sql_rename
+				query += ' '.join(ddl_post_alter)
 				return query
+
 			elif alter_dic["command"] == 'MODIFY':
-				column_type=self.type_dictionary[alter_dic["type"]]
-				column_name=alter_dic["name"]
-				if column_type=="enum":
-					enum_name="enum_"+table_name+"_"+alter_dic["name"]
-					column_type=enum_name
-					sql_drop_enum='DROP TYPE IF EXISTS '+column_type+' CASCADE;'
-					sql_create_enum="CREATE TYPE "+column_type+" AS ENUM ("+alter_dic["dimension"]+");"
-					ddl_enum.append(sql_drop_enum)
-					ddl_enum.append(sql_create_enum)
+				column_type = self.type_dictionary[alter_dic["type"]]
+				column_name = alter_dic["name"]
+				
+				enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
+				default_sql = self.generate_default_statements(table_name, column_name)
+				enm_dic = {'table':table_name, 'column':column_name, 'type':column_type, 'enum_list': enum_list, 'enum_elements':alter_dic["dimension"]}
+				enm_alter = self.build_enum_ddl(enm_dic)
+
+				ddl_pre_alter.append(enm_alter["pre_alter"])
+				ddl_pre_alter.append(default_sql["drop"])
+				ddl_post_alter.append(enm_alter["post_alter"])
+				ddl_post_alter.append(default_sql["create"])
+				column_type= enm_alter["column_type"]
 				if column_type=="character varying" or column_type=="character" or column_type=='numeric' or column_type=='bit' or column_type=='float':
 						column_type=column_type+"("+str(alter_dic["dimension"])+")"
-				query = ' '.join(ddl_enum) + """ALTER TABLE "%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (table_name, column_name, column_type, column_name, column_type)
+				query = ' '.join(ddl_pre_alter)
+				query +=  """ALTER TABLE "%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (table_name, column_name, column_type, column_name, column_type)
+				query += ' '.join(ddl_post_alter)
 				return query
-		query = ' '.join(ddl_enum)+" "+query_cmd + ' '+ table_name+ ' ' +', '.join(alter_cmd)+" ;"
+		query = ' '.join(ddl_pre_alter)
+		query +=  query_cmd + ' '+ table_name+ ' ' +', '.join(alter_cmd)+" ;"
+		query += ' '.join(ddl_post_alter)
 		return query
 
 
@@ -1457,3 +1701,85 @@ class pg_engine(object):
 				break;
 			self.logger.info("reindex detected, sleeping %s second(s)" % (self.sleep_on_reindex,))
 			time.sleep(self.sleep_on_reindex)
+	
+	def set_consistent_table(self, table):
+		"""
+			The method set to NULL the  binlog name and position for the given table.
+			When the table is marked consistent the read replica loop reads and saves the table's row images.
+			
+			:param table: the table name
+		"""
+		sql_set = """
+			UPDATE sch_chameleon.t_replica_tables
+				SET 
+					t_binlog_name = NULL,
+					i_binlog_position = NULL
+			WHERE
+					i_id_source = %s
+				AND	v_table_name = %s
+				AND	v_schema_name = %s
+			;
+		"""
+		self.pg_conn.pgsql_cur.execute(sql_set, (self.i_id_source, table, self.dest_schema))
+		
+	
+	def get_inconsistent_tables(self):
+		"""
+			The method collects the tables in not consistent state.
+			The informations are stored in a dictionary which key is the table's name.
+			The dictionary is used in the read replica loop to determine wheter the table's modifications
+			should be ignored because in not consistent state.
+			
+			:return: a dictionary with the tables in inconsistent state and their snapshot coordinates.
+			:rtype: dictionary
+		"""
+		sql_get = """
+			SELECT
+				v_schema_name,				
+				v_table_name,
+				t_binlog_name,
+				i_binlog_position
+			FROM
+				sch_chameleon.t_replica_tables
+			WHERE
+				t_binlog_name IS NOT NULL
+				AND i_binlog_position IS NOT NULL
+				AND i_id_source = %s
+		;
+		"""
+		inc_dic = {}
+		self.pg_conn.pgsql_cur.execute(sql_get, (self.i_id_source, ))
+		inc_results = self.pg_conn.pgsql_cur.fetchall()
+		for table  in inc_results:
+			tab_dic = {}
+			tab_dic["schema"]  = table[0]
+			tab_dic["table"]  = table[1]
+			tab_dic["log_seq"]  = int(table[2].split('.')[1])
+			tab_dic["log_pos"]  = int(table[3])
+			inc_dic[table[1]] = tab_dic
+		return inc_dic
+		
+		
+	def delete_table_events(self):
+		"""
+			The method removes the events from the log table for specific table and source. 
+			Is used to cleanup any residual event for a a synced table in the replica_engine's sync_table method.
+		"""
+		sql_clean = """
+			DELETE FROM sch_chameleon.t_log_replica
+			WHERE 
+				i_id_event IN (
+							SELECT 
+								log.i_id_event
+							FROM
+								sch_chameleon.t_replica_batch bat
+								INNER JOIN sch_chameleon.t_log_replica log
+									ON  log.i_id_batch=bat.i_id_batch
+							WHERE
+									log.v_table_name=ANY(%s)
+								AND 	bat.i_id_source=%s
+						)
+			;
+		"""
+		self.pg_conn.pgsql_cur.execute(sql_clean, (self.table_limit, self.i_id_source, ))
+		

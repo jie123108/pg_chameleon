@@ -116,8 +116,8 @@ class mysql_engine(object):
 		"""
 		table_type_map = self.get_table_type_map()	
 		schema_name = pg_engine.dest_schema
+		inc_tables = pg_engine.get_inconsistent_tables()
 		close_batch = False
-		total_events = 0
 		master_data = {}
 		group_insert = []
 		id_batch = batch_data[0][0]
@@ -136,13 +136,12 @@ class mysql_engine(object):
 		)
 		self.logger.debug("log_file %s, log_position %s. id_batch: %s " % (log_file, log_position, id_batch))
 		for binlogevent in my_stream:
-			total_events+=1
 			if isinstance(binlogevent, RotateEvent):
 				
 				event_time = binlogevent.timestamp
 				binlogfile = binlogevent.next_binlog
 				position = binlogevent.position
-				self.logger.debug("rotate event. binlogfile %s, position %s. " % (binlogfile, position))
+				self.logger.debug("ROTATE EVENT - binlogfile %s, position %s. " % (binlogfile, position))
 				if log_file != binlogfile:
 					close_batch = True
 				if close_batch:
@@ -170,19 +169,36 @@ class mysql_engine(object):
 					if len(group_insert)>0:
 						pg_engine.write_batch(group_insert)
 						group_insert=[]
-					self.logger.debug("query event. binlogfile %s, position %s.\n--------\n%s\n-------- " % (binlogfile, log_position, binlogevent.query))
+					self.logger.debug("QUERY EVENT - binlogfile %s, position %s.\n--------\n%s\n-------- " % (binlogfile, log_position, binlogevent.query))
 					self.sql_token.parse_sql(binlogevent.query)
 					for token in self.sql_token.tokenised:
-						event_time = binlogevent.timestamp
-						if len(token)>0:
-							query_data={
-								"binlog":log_file, 
-								"logpos":log_position, 
-								"schema": schema_name, 
-								"batch_id":id_batch, 
-								"log_table":log_table
-							}
-							pg_engine.write_ddl(token, query_data)
+						write_ddl = True
+						table_name = token["name"] 
+						if table_name in inc_tables:
+							write_ddl = False
+							log_seq = int(log_file.split('.')[1])
+							log_pos = int(log_position)
+							table_dic = inc_tables[table_name]
+							if log_seq > table_dic["log_seq"]:
+								write_ddl = True
+							elif log_seq == table_dic["log_seq"] and log_pos >= table_dic["log_pos"]:
+								write_ddl = True
+							if write_ddl:
+								self.logger.debug("CONSISTENT POINT FOR TABLE %s REACHED  - binlogfile %s, position %s" % (table_name, binlogfile, log_position))
+								pg_engine.set_consistent_table(table_name)
+								inc_tables = pg_engine.get_inconsistent_tables()
+						if write_ddl:
+							event_time = binlogevent.timestamp
+							self.logger.debug("TOKEN: %s" % (token))
+							if len(token)>0:
+								query_data={
+									"binlog":log_file, 
+									"logpos":log_position, 
+									"schema": schema_name, 
+									"batch_id":id_batch, 
+									"log_table":log_table
+								}
+								pg_engine.write_ddl(token, query_data)
 							
 						
 					self.sql_token.reset_lists()
@@ -190,14 +206,31 @@ class mysql_engine(object):
 						my_stream.close()
 						return [master_data, close_batch]
 			else:
-				
+				size_insert=0
 				for row in binlogevent.rows:
-					total_events+=1
+					add_row = True
 					log_file=binlogfile
 					log_position=binlogevent.packet.log_pos
 					table_name=binlogevent.table
 					event_time=binlogevent.timestamp
-					
+					if table_name in inc_tables:
+						table_consistent = False
+						log_seq = int(log_file.split('.')[1])
+						log_pos = int(log_position)
+						table_dic = inc_tables[table_name]
+						if log_seq > table_dic["log_seq"]:
+							table_consistent = True
+						elif log_seq == table_dic["log_seq"] and log_pos >= table_dic["log_pos"]:
+							table_consistent = True
+							
+						if table_consistent:
+							add_row = True
+							self.logger.debug("CONSISTENT POINT FOR TABLE %s REACHED  - binlogfile %s, position %s" % (table_name, binlogfile, log_position))
+							pg_engine.set_consistent_table(table_name)
+							inc_tables = pg_engine.get_inconsistent_tables()
+						else:
+							add_row = False
+							
 					column_map=table_type_map[table_name]
 					global_data={
 										"binlog":log_file, 
@@ -209,39 +242,45 @@ class mysql_engine(object):
 									}
 					event_data={}
 					event_update={}
-					if isinstance(binlogevent, DeleteRowsEvent):
-						global_data["action"] = "delete"
-						event_data=row["values"]
-					elif isinstance(binlogevent, UpdateRowsEvent):
-						global_data["action"] = "update"
-						event_data=row["after_values"]
-						event_update=row["before_values"]
-					elif isinstance(binlogevent, WriteRowsEvent):
-						global_data["action"] = "insert"
-						event_data=row["values"]
-					for column_name in event_data:
-						column_type=column_map[column_name]
-						if column_type in self.hexify and event_data[column_name]:
-							event_data[column_name]=binascii.hexlify(event_data[column_name]).decode()
-						elif column_type in self.hexify and isinstance(event_data[column_name], bytes):
-							event_data[column_name] = ''
-					for column_name in event_update:
-						column_type=column_map[column_name]
-						if column_type in self.hexify and event_update[column_name]:
-							event_update[column_name]=binascii.hexlify(event_update[column_name]).decode()
-						elif column_type in self.hexify and isinstance(event_update[column_name], bytes):
-							event_update[column_name] = ''
-					event_insert={"global_data":global_data,"event_data":event_data,  "event_update":event_update}
-					group_insert.append(event_insert)
+					if add_row:
+						event_insert = {}
+						if isinstance(binlogevent, DeleteRowsEvent):
+							global_data["action"] = "delete"
+							event_data=row["values"]
+						elif isinstance(binlogevent, UpdateRowsEvent):
+							global_data["action"] = "update"
+							event_data=row["after_values"]
+							event_update=row["before_values"]
+						elif isinstance(binlogevent, WriteRowsEvent):
+							global_data["action"] = "insert"
+							event_data=row["values"]
+						for column_name in event_data:
+							column_type=column_map[column_name]
+							if column_type in self.hexify and event_data[column_name]:
+								event_data[column_name]=binascii.hexlify(event_data[column_name]).decode()
+							elif column_type in self.hexify and isinstance(event_data[column_name], bytes):
+								event_data[column_name] = ''
+						for column_name in event_update:
+							column_type=column_map[column_name]
+							if column_type in self.hexify and event_update[column_name]:
+								event_update[column_name]=binascii.hexlify(event_update[column_name]).decode()
+							elif column_type in self.hexify and isinstance(event_update[column_name], bytes):
+								event_update[column_name] = ''
+						event_insert={"global_data":global_data,"event_data":event_data,  "event_update":event_update}
+						size_insert += len(str(event_insert))
+						group_insert.append(event_insert)
+						
 					master_data["File"]=log_file
 					master_data["Position"]=log_position
 					master_data["Time"]=event_time
-					if total_events>=self.replica_batch_size:
-						self.logger.debug("total events exceeded %s. Writing batch.: %s  " % (total_events, master_data,  ))
-						total_events=0
+					
+					if len(group_insert)>=self.replica_batch_size:
+						self.logger.debug("Max rows per batch reached. Writing %s. rows. Size in bytes: %s " % (len(group_insert), size_insert))
 						pg_engine.write_batch(group_insert)
+						size_insert=0
 						group_insert=[]
 						close_batch=True
+						
 						
 						
 		my_stream.close()
@@ -251,7 +290,40 @@ class mysql_engine(object):
 			close_batch=True
 		
 		return [master_data, close_batch]
-
+	
+	def check_mysql_config(self):
+		"""
+			The method check if the mysql configuration is compatible with the replica requirements.
+			If all the configuration requirements are met then the return value is True.
+			Otherwise is false.
+			The parameters checked are
+			log_bin - ON if the binary log is enabled
+			binlog_format - must be ROW , otherwise the replica won't get the data
+			binlog_row_image - must be FULL, otherwise the row image will be incomplete
+			
+			:return: true if all the requirements are met, false if not
+			:rtype: boolean
+		"""
+		sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'log_bin';"""
+		self.mysql_con.my_cursor.execute(sql_log_bin)
+		variable_check = self.mysql_con.my_cursor.fetchone()
+		log_bin = variable_check["Value"]
+		
+		sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'binlog_format';"""
+		self.mysql_con.my_cursor.execute(sql_log_bin)
+		variable_check = self.mysql_con.my_cursor.fetchone()
+		binlog_format = variable_check["Value"]
+		
+		sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'binlog_row_image';"""
+		self.mysql_con.my_cursor.execute(sql_log_bin)
+		variable_check = self.mysql_con.my_cursor.fetchone()
+		binlog_row_image = variable_check["Value"]
+		if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL':
+			replica_possible = True
+		else:
+			replica_possible = False
+		return replica_possible
+		
 	def run_replica(self, pg_engine):
 		"""
 		Run a MySQL replica read attempt and stores the data in postgres if found. 
@@ -370,7 +442,7 @@ class mysql_engine(object):
 					THEN
 						concat('cast(`',column_name,'` AS unsigned)')
 				ELSE
-					concat('`',column_name,'`')
+					concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.mysql_con.my_charset +""")')
 				END
 				AS column_csv,
 				CASE
@@ -383,7 +455,8 @@ class mysql_engine(object):
 					THEN
 						concat('cast(`',column_name,'` AS unsigned) AS','`',column_name,'`')
 				ELSE
-					concat('`',column_name,'`')
+					concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.mysql_con.my_charset +""") AS','`',column_name,'`')
+					
 				END
 				AS column_select
 			FROM 
@@ -497,7 +570,7 @@ class mysql_engine(object):
 			index_data=self.get_index_metadata(table["table_name"])
 			dic_table={'name':table["table_name"], 'columns':column_data,  'indices': index_data}
 			self.my_tables[table["table_name"]]=dic_table
-	
+		
 	def print_progress (self, iteration, total, table_name):
 		"""
 			Print the copy progress. 
@@ -555,7 +628,7 @@ class mysql_engine(object):
 			insert_data =  self.mysql_con.my_cursor_fallback.fetchall()
 			pg_engine.insert_data(table_name, insert_data , self.my_tables)
 
-	def copy_table_data(self, pg_engine,  copy_max_memory):
+	def copy_table_data(self, pg_engine,  copy_max_memory, lock_tables=True):
 		"""
 			copy the table data from mysql to postgres
 			param pg_engine: The postgresql engine required to write into the postgres database.
@@ -574,11 +647,13 @@ class mysql_engine(object):
 			
 			:param pg_engine: the postgresql engine
 			:param copy_max_memory: The estimated maximum amount of memory to use in a single slice copy
+			:param lock_tables: Specifies whether the tables should be locked before copying the data
 			
 		"""
 		out_file='%s/output_copy.csv' % self.out_dir
 		self.logger.info("locking the tables")
-		self.lock_tables()
+		if lock_tables:
+			self.lock_tables()
 		table_list = []
 		if pg_engine.table_limit[0] == '*':
 			for table_name in self.my_tables:
@@ -587,89 +662,92 @@ class mysql_engine(object):
 			table_list = pg_engine.table_limit
 		for table_name in table_list:
 			slice_insert=[]
-			self.logger.info("copying table "+table_name)
-			table=self.my_tables[table_name]
 			
-			table_name=table["name"]
-			table_columns=table["columns"]
-			self.logger.debug("estimating rows in "+table_name)
-			sql_count=""" 
-				SELECT 
-					table_rows,
-					CASE
-						WHEN avg_row_length>0
-						then
-							round(("""+copy_max_memory+"""/avg_row_length))
-					ELSE
-						0
-					END as copy_limit
-				FROM 
-					information_schema.TABLES 
-				WHERE 
-						table_schema=%s 
-					AND	table_type='BASE TABLE'
-					AND table_name=%s 
-				;
-			"""
-			self.mysql_con.my_cursor.execute(sql_count, (self.mysql_con.my_database, table_name))
-			count_rows=self.mysql_con.my_cursor.fetchone()
-			total_rows=count_rows["table_rows"]
-			copy_limit=int(count_rows["copy_limit"])
-			if copy_limit == 0:
-				copy_limit=1000000
-			num_slices=int(total_rows//copy_limit)
-			range_slices=list(range(num_slices+1))
-			total_slices=len(range_slices)
-			slice=range_slices[0]
-			self.logger.debug("%s will be copied in %s slices of %s rows"  % (table_name, total_slices, copy_limit))
-			columns_csv=self.generate_select(table_columns, mode="csv")
-			columns_ins=self.generate_select(table_columns, mode="insert")
-			csv_data=""
-			sql_out="SELECT "+columns_csv+" as data FROM "+table_name+";"
-			self.mysql_con.connect_db_ubf()
 			try:
-				self.logger.debug("Executing query for table %s"  % (table_name, ))
-				self.mysql_con.my_cursor_ubf.execute(sql_out)
-			except:
-				self.logger.error("error when pulling data from %s. sql executed: %s" % (table_name, sql_out))
-			
-			self.logger.debug("Starting extraction loop for table %s"  % (table_name, ))
-			while True:
-				csv_results = self.mysql_con.my_cursor_ubf.fetchmany(copy_limit)
-				if len(csv_results) == 0:
-					break
-				csv_data="\n".join(d[0] for d in csv_results )
-				
-				if self.mysql_con.copy_mode=='direct':
-					csv_file=io.StringIO()
-					csv_file.write(csv_data)
-					csv_file.seek(0)
-
-				if self.mysql_con.copy_mode=='file':
-					csv_file=codecs.open(out_file, 'wb', self.mysql_con.my_charset)
-					csv_file.write(csv_data)
-					csv_file.close()
-					csv_file=open(out_file, 'rb')
-					
+				table=self.my_tables[table_name]
+				self.logger.info("copying table %s" %(table_name))
+				table_name=table["name"]
+				table_columns=table["columns"]
+				self.logger.debug("estimating rows in "+table_name)
+				sql_count=""" 
+					SELECT 
+						table_rows,
+						CASE
+							WHEN avg_row_length>0
+							then
+								round(("""+copy_max_memory+"""/avg_row_length))
+						ELSE
+							0
+						END as copy_limit
+					FROM 
+						information_schema.TABLES 
+					WHERE 
+							table_schema=%s 
+						AND	table_type='BASE TABLE'
+						AND table_name=%s 
+					;
+				"""
+				self.mysql_con.my_cursor.execute(sql_count, (self.mysql_con.my_database, table_name))
+				count_rows=self.mysql_con.my_cursor.fetchone()
+				total_rows=count_rows["table_rows"]
+				copy_limit=int(count_rows["copy_limit"])
+				if copy_limit == 0:
+					copy_limit=1000000
+				num_slices=int(total_rows//copy_limit)
+				range_slices=list(range(num_slices+1))
+				total_slices=len(range_slices)
+				slice=range_slices[0]
+				self.logger.debug("%s will be copied in %s slices of %s rows"  % (table_name, total_slices, copy_limit))
+				columns_csv=self.generate_select(table_columns, mode="csv")
+				columns_ins=self.generate_select(table_columns, mode="insert")
+				csv_data=""
+				sql_out="SELECT "+columns_csv+" as data FROM "+table_name+";"
+				self.mysql_con.connect_db_ubf()
 				try:
-					pg_engine.copy_data(table_name, csv_file, self.my_tables)
+					self.logger.debug("Executing query for table %s"  % (table_name, ))
+					self.mysql_con.my_cursor_ubf.execute(sql_out)
 				except:
-					self.logger.info("table %s error in PostgreSQL copy, saving slice number for the fallback to insert statements " % (table_name, ))
-					slice_insert.append(slice)
+					self.logger.error("error when pulling data from %s. sql executed: %s" % (table_name, sql_out))
+				
+				self.logger.debug("Starting extraction loop for table %s"  % (table_name, ))
+				while True:
+					csv_results = self.mysql_con.my_cursor_ubf.fetchmany(copy_limit)
+					if len(csv_results) == 0:
+						break
+					csv_data="\n".join(d[0] for d in csv_results )
 					
-				self.print_progress(slice+1,total_slices, table_name)
-				slice+=1
-				csv_file.close()
-			self.mysql_con.disconnect_db_ubf()
-			if len(slice_insert)>0:
-				ins_arg=[]
-				ins_arg.append(slice_insert)
-				ins_arg.append(table_name)
-				ins_arg.append(columns_ins)
-				ins_arg.append(copy_limit)
-				self.insert_table_data(pg_engine, ins_arg)
-		self.logger.info("releasing the lock")
-		self.unlock_tables()
+					if self.mysql_con.copy_mode=='direct':
+						csv_file=io.StringIO()
+						csv_file.write(csv_data)
+						csv_file.seek(0)
+
+					if self.mysql_con.copy_mode=='file':
+						csv_file=codecs.open(out_file, 'wb', self.mysql_con.my_charset)
+						csv_file.write(csv_data)
+						csv_file.close()
+						csv_file=open(out_file, 'rb')
+						
+					try:
+						pg_engine.copy_data(table_name, csv_file, self.my_tables)
+					except:
+						self.logger.info("table %s error in PostgreSQL copy, saving slice number for the fallback to insert statements " % (table_name, ))
+						slice_insert.append(slice)
+						
+					self.print_progress(slice+1,total_slices, table_name)
+					slice+=1
+					csv_file.close()
+				self.mysql_con.disconnect_db_ubf()
+				if len(slice_insert)>0:
+					ins_arg=[]
+					ins_arg.append(slice_insert)
+					ins_arg.append(table_name)
+					ins_arg.append(columns_ins)
+					ins_arg.append(copy_limit)
+					self.insert_table_data(pg_engine, ins_arg)
+			except:
+				self.logger.info("the table %s does not exist" %(table_name))
+		if lock_tables:
+			self.unlock_tables()
 		try:
 			remove(out_file)
 		except:
@@ -700,10 +778,14 @@ class mysql_engine(object):
 		self.get_master_status()
 	
 	def unlock_tables(self):
-		"""The method unlocks the tables previously locked by lock_tables"""
+		"""
+			The method unlocks the tables previously locked by lock_tables
+		"""
 		t_sql_unlock="UNLOCK TABLES;"
 		self.mysql_con.my_cursor.execute(t_sql_unlock)
-			
+	
+	
+		
 			
 	def __del__(self):
 		"""

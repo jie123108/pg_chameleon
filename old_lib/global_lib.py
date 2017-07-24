@@ -181,12 +181,13 @@ class replica_engine(object):
 		The class sets the logging using the configuration parameter.
 		
 	"""
-	def __init__(self, config, debug_mode=False):
+	def __init__(self, config, debug_mode=False, nolock=False):
 		"""
 			Class constructor
 			:param stdout: forces the logging to stdout even if the logging destination is file
 		"""
 		self.debug_mode = debug_mode
+		self.nolock=nolock
 		self.lst_yes= ['yes',  'Yes', 'y', 'Y']
 		self.global_config=global_config(config)
 		self.logger = logging.getLogger(__name__)
@@ -388,6 +389,12 @@ class replica_engine(object):
 			Otherwise sleeps for the amount or seconds set in sleep_loop.
 			
 		"""
+		replica_possible = self.my_eng.check_mysql_config()
+		if replica_possible:
+			self.logger.info("Configuration on MySQL allows replica.")
+		else:
+			print("** FATAL - The mysql configuration do not allow the replica.\n The parameters log_bin, binlog_format  and binlog_row_image are not set correctly.\n Check the documentation for further details.\n http://www.pgchameleon.org/documents/")
+			sys.exit()
 		already_running = self.check_running(write_pid=True)
 		exit_request = self.check_file_exit()
 		
@@ -399,7 +406,7 @@ class replica_engine(object):
 		
 		self.pg_eng.set_source_id('running')
 		while True:
-			if self.debug_mode:
+			if self.debug_mode or self.nolock:
 				self.my_eng.run_replica(self.pg_eng)
 			else:
 				try:
@@ -489,23 +496,30 @@ class replica_engine(object):
 		self.my_eng.copy_table_data(self.pg_eng, self.global_config.copy_max_memory)
 		self.pg_eng.save_master_status(self.my_eng.master_status, cleanup=True)
 
-	def sync_replica(self, table):
+	def sync_tables(self, table):
 		"""
-			syncronise the table data without destroying them.
-			The process is very similar to the init_replica except for the fact the tables are not dropped.
-			The existing indices are dropped and created after the data load in order to speed up the process.
-			Is possible to restrict the sync to a limited set of tables.
-			
+			syncronise single tables with the mysql master.
+			The process attempts to drop the existing tables or add them if not present.
+			The tables are stored in the replica catalogue with their master's coordinates and are ignored until the replica process reaches
+			the correct position. 
 			:param table: comma separated list of table names to synchronise
 		"""
-		self.stop_replica(allow_restart=False)
-		self.pg_eng.table_limit=table.split(',')
-		self.pg_eng.set_source_id('initialising')
-		self.pg_eng.get_index_def()
-		self.pg_eng.drop_src_indices()
-		self.pg_eng.truncate_tables()
-		self.copy_table_data()
-		self.pg_eng.create_src_indices()
-		self.pg_eng.set_source_id('initialised')
-		self.enable_replica()
-		
+		if table != "*":
+			table_limit = table.split(',')
+			self.my_eng.lock_tables()
+			self.pg_eng.table_limit = table_limit
+			self.pg_eng.master_status = self.my_eng.master_status
+			self.pg_eng.set_source_id('initialising')
+			self.stop_replica(allow_restart=False)
+			self.pg_eng.build_tab_ddl()
+			self.pg_eng.drop_tables()
+			self.pg_eng.create_tables()
+			self.my_eng.copy_table_data(self.pg_eng,  self.global_config.copy_max_memory, False)
+			self.pg_eng.create_indices()
+			self.pg_eng.delete_table_events()
+			self.pg_eng.set_source_id('initialised')
+			self.my_eng.unlock_tables()
+			self.enable_replica()
+		else:
+			print("You should specify at least one table to synchronise.")
+

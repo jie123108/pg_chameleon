@@ -24,8 +24,10 @@ class mysql_engine(object):
 		copy_mode = self.conn_pars["copy_mode"]
 		my_database = self.src_conn["replica_database"]
 		self.logger.info("start copy loop")
-		self.connect_db()
+		
 		for table_name in self.my_tables:
+			self.connect_db()
+			self.lock_tables(table_name)
 			out_file = '/tmp/%s_%s.csv' % (my_database, table_name)
 			self.logger.info("copying data for table %s" % (table_name))
 			slice_insert = []
@@ -109,6 +111,7 @@ class mysql_engine(object):
 				ins_arg.append(columns_ins)
 				ins_arg.append(copy_limit)
 				self.insert_table_data(ins_arg)
+			self.disconnect_db()
 		self.disconnect_db()
 	
 	def insert_table_data(self, ins_arg):
@@ -147,64 +150,73 @@ class mysql_engine(object):
 				column_list.append(column["column_select"])
 			columns=','.join(column_list)
 		return columns
-	
+		
+		
 	def get_column_metadata(self, table):
-		hexify = self.conn_pars["hexify"]
+		"""
+			The method extracts the columns metadata for a specific table.
+			The select builds also the field list formatted for the CSV copy or a single insert copy.
+			The data types included in hexlify are hex encoded on the fly.
+			
+			:param table: The table name.
+		"""
 		sql_columns="""
-					SELECT 
-						column_name,
-						column_default,
-						ordinal_position,
-						data_type,
-						character_maximum_length,
-						extra,
-						column_key,
-						is_nullable,
-						numeric_precision,
-						numeric_scale,
-						CASE 
-							WHEN data_type="enum"
-						THEN	
-							SUBSTRING(COLUMN_TYPE,5)
-						END AS enum_list,
-						CASE
-							WHEN 
-								data_type IN ('"""+"','".join(hexify)+"""')
-							THEN
-								concat('hex(',column_name,')')
-							WHEN 
-								data_type IN ('bit')
-							THEN
-								concat('cast(`',column_name,'` AS unsigned)')
-						ELSE
-							concat('`',column_name,'`')
-						END
-						AS column_csv,
-						CASE
-							WHEN 
-								data_type IN ('"""+"','".join(hexify)+"""')
-							THEN
-								concat('hex(',column_name,')')
-							WHEN 
-								data_type IN ('bit')
-							THEN
-								concat('cast(`',column_name,'` AS unsigned) AS','`',column_name,'`')
-						ELSE
-							concat('`',column_name,'`')
-						END
-						AS column_select
+			SELECT 
+				column_name,
+				column_default,
+				ordinal_position,
+				data_type,
+				character_maximum_length,
+				extra,
+				column_key,
+				is_nullable,
+				numeric_precision,
+				numeric_scale,
+				CASE 
+					WHEN data_type="enum"
+				THEN	
+					SUBSTRING(COLUMN_TYPE,5)
+				END AS enum_list,
+				CASE
+					WHEN 
+						data_type IN ('"""+"','".join(self.hexify)+"""')
+					THEN
+						concat('hex(',column_name,')')
+					WHEN 
+						data_type IN ('bit')
+					THEN
+						concat('cast(`',column_name,'` AS unsigned)')
+				ELSE
+					concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.src_conn["my_charset"] +""")')
+				END
+				AS column_csv,
+				CASE
+					WHEN 
+						data_type IN ('"""+"','".join(self.hexify)+"""')
+					THEN
+						concat('hex(',column_name,') AS','`',column_name,'`')
+					WHEN 
+						data_type IN ('bit')
+					THEN
+						concat('cast(`',column_name,'` AS unsigned) AS','`',column_name,'`')
+				ELSE
+					concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.src_conn["my_charset"] +""") AS','`',column_name,'`')
+					
+				END
+				AS column_select
 			FROM 
-						information_schema.COLUMNS 
+				information_schema.COLUMNS 
 			WHERE 
-									table_schema=%s
-						AND 	table_name=%s
+				table_schema=%s
+				AND 	table_name=%s
 			ORDER BY 
-							ordinal_position
+				ordinal_position
 			;
 		"""
 		self.my_dict_cursor.execute(sql_columns, (self.src_conn["replica_database"], table))
 		column_data=self.my_dict_cursor.fetchall()
 		return column_data
+
 
 	def get_index_metadata(self, table):
 		sql_index="""
@@ -300,21 +312,17 @@ class mysql_engine(object):
 	def get_master_status(self):
 		t_sql_master="SHOW MASTER STATUS;"
 		self.my_dict_cursor.execute(t_sql_master)
-		self.master_status=self.my_dict_cursor.fetchall()		
+		master_status=self.my_dict_cursor.fetchall()		
+		return master_status
 		
 		
-	def lock_tables(self):
+	def lock_tables(self, table_name):
 		""" lock tables and get the log coords """
-		self.locked_tables=[]
-		lock_tables = ""
-		for table_name in self.my_tables:
-			table = self.my_tables[table_name]
-			self.locked_tables.append(table["name"])
-		lock_tables = ", ".join(self.locked_tables) 
-		self.logger.info("flushing tables with read lock")
-		t_sql_lock="FLUSH TABLES %s WITH READ LOCK;" % lock_tables
+		self.logger.info("flushing table %s with read lock" % table_name)
+		t_sql_lock="FLUSH TABLES %s WITH READ LOCK;" % table_name
 		self.my_dict_cursor.execute(t_sql_lock)
-		self.get_master_status()
+		master_status = self.get_master_status()
+		return master_status
 	
 	def unlock_tables(self):
 		""" unlock tables previously locked """
@@ -325,9 +333,10 @@ class mysql_engine(object):
 	
 	
 	def init_replica(self):
+		self.hexify = self.conn_pars["hexify"]
+		self.logger.debug("The data types %s will be hexified" % (','.join(self.hexify)))
 		self.connect_dict_db()
 		self.get_table_metadata()
-		self.lock_tables()
 		self.logger.info("Creating the schema in target database")
 		self.pg_eng.conn_pars = self.conn_pars
 		self.pg_eng.logger = self.logger
@@ -337,10 +346,12 @@ class mysql_engine(object):
 		self.pg_eng.build_tab_ddl()
 		self.pg_eng.build_idx_ddl()
 		self.pg_eng.create_tables()
+		self.unlock_tables()
+		master_status = self.get_master_status()
 		self.copy_table_data()
 		self.unlock_tables()
 		self.pg_eng.create_indices()
 		self.pg_eng.clean_batch_data()
-		self.pg_eng.save_master_status(self.master_status, False)
+		self.pg_eng.save_master_status(master_status, False)
 		self.pg_eng.set_replica_id("initialised")
 		self.disconnect_dict_db()

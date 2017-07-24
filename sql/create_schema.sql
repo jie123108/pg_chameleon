@@ -87,6 +87,8 @@ CREATE TABLE sch_chameleon.t_replica_tables
   v_table_name character varying(100) NOT NULL,
   v_schema_name character varying(100) NOT NULL,
   v_table_pkey character varying(100)[] NOT NULL,
+  t_binlog_name text,
+  i_binlog_position integer,
   CONSTRAINT pk_t_replica_tables PRIMARY KEY (i_id_table)
 )
 WITH (
@@ -122,22 +124,7 @@ ALTER TABLE sch_chameleon.t_replica_tables
 
 
 
-CREATE TABLE sch_chameleon.t_index_def
-(
-  i_id_def bigserial NOT NULL,
-  i_id_replica bigint NOT NULL,
-  v_schema character varying(100),
-  v_table character varying(100),
-  v_index character varying(100),
-  t_create	text,
-  t_drop	text,
-  CONSTRAINT pk_t_index_def PRIMARY KEY (i_id_def)
-)
-WITH (
-  OIDS=FALSE
-);
 
-CREATE UNIQUE INDEX idx_schema_table_source ON sch_chameleon.t_index_def(i_id_replica,v_schema,v_table,v_index);
 
 CREATE OR REPLACE FUNCTION sch_chameleon.fn_refresh_parts() 
 RETURNS VOID as 
@@ -164,6 +151,14 @@ BEGIN
                         r_tables.v_log_table
                 );
         EXECUTE t_sql;
+	t_sql:=format('
+			CREATE INDEX IF NOT EXISTS idx_id_batch_%s 
+			ON sch_chameleon.%I (i_id_batch)
+			;',
+			r_tables.v_log_table,
+                        r_tables.v_log_table
+		);
+	EXECUTE t_sql;
     END LOOP;
 END
 $BODY$

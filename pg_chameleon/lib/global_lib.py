@@ -56,10 +56,11 @@ class global_config(object):
 		"""
 			Class  constructor.
 		"""
+		self.hexify_always = ['blob', 'tinyblob', 'mediumblob', 'longblob', 'binary', 'varbinary', 'geometry']
 		local_conndir= "%s/.pg_chameleon/connection/" % os.path.expanduser('~')	
 		
 		if connection_file:
-			self.connection_file = '%s/%s'%(local_conndir, connection_file)
+			self.connection_file = '%s/%s.yaml'%(local_conndir, connection_file)
 			if load_config:
 				self.load_config()
 		else:
@@ -111,9 +112,14 @@ class global_config(object):
 		except:
 			raise
 		
+	def set_hexify(self):
+		self.conn_pars["hexify"] = self.hexify_always + [hexval for hexval in self.conn_pars["hexify"] if hexval not in self.hexify_always ]
+		
+	
 	
 	def load_connection(self):
 		""" 
+		
 		"""
 		
 		if not os.path.isfile(self.connection_file):
@@ -127,6 +133,7 @@ class global_config(object):
 		for key in conndic:
 			self.conn_pars[key] = conndic[key]
 		self.set_copy_max_memory()	
+		self.set_hexify()
 		
 		
 
@@ -197,7 +204,7 @@ class replica_engine(object):
 		self.my_eng.pg_eng = self.pg_eng
 		keep_fds = [self.fh.stream.fileno()]
 		pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
-		if self.global_config.log_kwargs["log_dest"]  == 'stdout':
+		if self.global_config.log_kwargs["log_dest"]  == 'stdout' or self.global_config.log_kwargs["debug_mode"]:
 			self.my_eng.init_replica()
 		else:
 			daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=False , keep_fds=keep_fds)

@@ -24,37 +24,41 @@ class pg_engine(object):
 		self.type_ddl={}
 		self.idx_sequence=0
 		self.type_dictionary = {
-						'integer':'integer',
-						'mediumint':'bigint',
-						'tinyint':'integer',
-						'smallint':'integer',
-						'int':'integer',
-						'bigint':'bigint',
-						'varchar':'character varying',
-						'text':'text',
-						'char':'character',
-						'datetime':'timestamp without time zone',
-						'date':'date',
-						'time':'time without time zone',
-						'timestamp':'timestamp without time zone',
-						'tinytext':'text',
-						'mediumtext':'text',
-						'longtext':'text',
-						'tinyblob':'bytea',
-						'mediumblob':'bytea',
-						'longblob':'bytea',
-						'blob':'bytea', 
-						'binary':'bytea', 
-						'decimal':'numeric', 
-						'double':'double precision', 
-						'double precision':'double precision', 
-						'float':'float', 
-						'bit':'integer', 
-						'year':'integer', 
-						'enum':'enum', 
-						'set':'text', 
-						'json':'text'
-					}
+			'integer':'integer',
+			'mediumint':'bigint',
+			'tinyint':'integer',
+			'smallint':'integer',
+			'int':'integer',
+			'bigint':'bigint',
+			'varchar':'character varying',
+			'text':'text',
+			'char':'character',
+			'datetime':'timestamp without time zone',
+			'date':'date',
+			'time':'time without time zone',
+			'timestamp':'timestamp without time zone',
+			'tinytext':'text',
+			'mediumtext':'text',
+			'longtext':'text',
+			'tinyblob':'bytea',
+			'mediumblob':'bytea',
+			'longblob':'bytea',
+			'blob':'bytea', 
+			'binary':'bytea', 
+			'varbinary':'bytea', 
+			'decimal':'numeric', 
+			'double':'double precision', 
+			'double precision':'double precision', 
+			'float':'double precision', 
+			'bit':'integer', 
+			'year':'integer', 
+			'enum':'enum', 
+			'set':'text', 
+			'json':'text', 
+			'bool':'boolean', 
+			'boolean':'boolean', 
+			'geometry':'bytea',
+		}
 					
 	def connect_db(self):
 		self.dest_conn= self.conn_pars['dest_conn']
@@ -183,8 +187,16 @@ class pg_engine(object):
 			column_copy.append('"'+column["column_name"]+'"')
 		sql_copy="COPY "+'"'+self.dest_schema+'"'+"."+'"'+table+'"'+" ("+','.join(column_copy)+") FROM STDIN WITH NULL 'NULL' CSV QUOTE '\"' DELIMITER',' ESCAPE '\"' ; "
 		self.pgsql_cur.copy_expert(sql_copy,csv_file)
-	
+
 	def insert_data(self, table,  insert_data,  my_tables={}):
+		"""
+			The method is a fallback procedure for when the copy method fails.
+			The procedure performs a row by row insert, very slow but capable to skip the rows with problematic data (e.g. enchoding issues).
+			
+			:param table: the table name, used to get the table's metadata out of my_tables
+			:param csv_file: file like object with the table's data stored in CSV format
+			:param my_tables: table's metadata dictionary 
+		"""
 		column_copy=[]
 		column_marker=[]
 		
@@ -201,6 +213,13 @@ class pg_engine(object):
 			except psycopg2.Error as e:
 					self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror))
 					self.logger.error(self.pgsql_cur.mogrify(sql_head,column_values))
+			except:
+				self.logger.error("unexpected error when processing the row")
+				self.logger.error(" - > Table: %s" % table)
+				self.logger.error(" - > Insert list: %s" % (','.join(column_copy)) )
+				self.logger.error(" - > Insert values: %s" % (column_values) )
+
+
 	
 	
 	def build_tab_ddl(self):
