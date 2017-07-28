@@ -15,6 +15,7 @@ commands = [
 	'init_replica', 
 	'set_config', 
 	'show_status', 
+	'start_replica', 
 	]
 command_help = """Available commands, """ + ','.join(commands)
 connection_help = """Specify the connection filename. If omitted defaults to config/connection.yaml"""
@@ -37,7 +38,7 @@ replica = replica_engine(args)
 
 try:
 	getattr(replica, args.command)(args)
-	sys.exit()
+	#sys.exit()
 #except AttributeError as e:
 #	print (e)
 except SystemExit:

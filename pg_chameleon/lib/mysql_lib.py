@@ -96,7 +96,6 @@ class mysql_engine(object):
 					csv_file=open(out_file, 'rb')
 					
 				try:
-					blah
 					self.pg_eng.copy_data(table_name, csv_file, self.my_tables)
 					self.print_progress(slice+1,total_slices, table_name)
 				except:

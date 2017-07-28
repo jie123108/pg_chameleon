@@ -203,13 +203,21 @@ class replica_engine(object):
 		self.my_eng.conn_pars = self.global_config.conn_pars
 		self.my_eng.pg_eng = self.pg_eng
 		keep_fds = [self.fh.stream.fileno()]
-		pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
+		self.init_pid='%s/%s.pid' % (self.global_config.conn_pars["pid_dir"], args.connkey)
 		if self.global_config.log_kwargs["log_dest"]  == 'stdout' or self.global_config.log_kwargs["debug_mode"]:
-			self.my_eng.init_replica()
+			foreground = True
 		else:
-			daemon = Daemonize(app="test_app", pid=pid, action=self.my_eng.init_replica, foreground=False , keep_fds=keep_fds)
-			daemon.start()
+			foreground = False
+		init_daemon = Daemonize(app="init_replica", pid=self.init_pid, action=self.my_eng.init_replica, foreground=foreground , keep_fds=keep_fds)
+		init_daemon.start()
 		
+	def start_replica(self, args):
+		read_log = self.init_logger(args, None)
+		replay_log = self.init_logger(args, None)
+		out_log = self.init_logger(args, None)
+
+		print('starting the replica process')
+	
 	
 	def add_replica(self, args):
 		replog = self.init_logger(args, 'stdout')
