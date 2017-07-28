@@ -12,6 +12,7 @@ from pymysqlreplication.row_event import (
     WriteRowsEvent,
 )
 from pymysqlreplication.event import RotateEvent
+import random, string
 from os import remove
 class mysql_engine(object):
 	def __init__(self):
@@ -26,10 +27,12 @@ class mysql_engine(object):
 		self.logger.info("start copy loop")
 		
 		for table_name in self.my_tables:
+			outname=''.join(random.choice(string.ascii_letters) for i in range(20))
+			out_file='%s/%s.csv' % (self.conn_pars["out_dir"], outname)
+		
 			self.connect_db()
 			master_status=self.lock_tables(table_name)
 			self.pg_eng.set_table_log_data(table_name, master_status)
-			out_file = '/tmp/%s_%s.csv' % (my_database, table_name)
 			self.logger.info("copying data for table %s" % (table_name))
 			slice_insert = []
 			table = self.my_tables[table_name]
@@ -93,6 +96,7 @@ class mysql_engine(object):
 					csv_file=open(out_file, 'rb')
 					
 				try:
+					blah
 					self.pg_eng.copy_data(table_name, csv_file, self.my_tables)
 					self.print_progress(slice+1,total_slices, table_name)
 				except:
