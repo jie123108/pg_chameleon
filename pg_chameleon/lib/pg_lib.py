@@ -309,6 +309,25 @@ class pg_engine(object):
 			self.store_table(table)
 
 
+	def set_table_log_data(self, table_name, master_status):
+		print(master_status)
+		master_data = master_status[0]
+		binlog_file = master_data["File"]
+		binlog_pos = master_data["Position"]
+		
+		sql_update = """
+			UPDATE sch_chameleon.t_replica_tables
+				SET
+					t_binlog_name=%s,
+					i_binlog_position=%s
+			WHERE
+					v_table_name=%s
+				AND	i_id_replica=%s
+		"""
+		self.pgsql_cur.execute(sql_update, (binlog_file, binlog_pos, table_name, self.i_id_replica))
+		
+	
+
 	def store_table(self, table_name):
 		table_data=self.table_metadata[table_name]
 		for index in table_data["indices"]:

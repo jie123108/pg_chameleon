@@ -27,7 +27,8 @@ class mysql_engine(object):
 		
 		for table_name in self.my_tables:
 			self.connect_db()
-			self.lock_tables(table_name)
+			master_status=self.lock_tables(table_name)
+			self.pg_eng.set_table_log_data(table_name, master_status)
 			out_file = '/tmp/%s_%s.csv' % (my_database, table_name)
 			self.logger.info("copying data for table %s" % (table_name))
 			slice_insert = []
@@ -111,7 +112,7 @@ class mysql_engine(object):
 				ins_arg.append(columns_ins)
 				ins_arg.append(copy_limit)
 				self.insert_table_data(ins_arg)
-			self.disconnect_db()
+			self.unlock_tables()
 		self.disconnect_db()
 	
 	def insert_table_data(self, ins_arg):
@@ -346,10 +347,8 @@ class mysql_engine(object):
 		self.pg_eng.build_tab_ddl()
 		self.pg_eng.build_idx_ddl()
 		self.pg_eng.create_tables()
-		self.unlock_tables()
 		master_status = self.get_master_status()
 		self.copy_table_data()
-		self.unlock_tables()
 		self.pg_eng.create_indices()
 		self.pg_eng.clean_batch_data()
 		self.pg_eng.save_master_status(master_status, False)
