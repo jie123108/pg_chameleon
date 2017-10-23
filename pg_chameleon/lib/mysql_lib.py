@@ -27,6 +27,7 @@ class mysql_connection(object):
 		""" Connects to the database and creates an unbuffered cursor """
 		self.my_connection_ubf=pymysql.connect(
 			host=self.mysql_conn["host"],
+			port=self.mysql_conn.get("port", 3306),
 			user=self.mysql_conn["user"],
 			password=self.mysql_conn["passwd"],
 			db=self.my_database,
@@ -41,6 +42,7 @@ class mysql_connection(object):
 		""" Connects to the database and creates a dictionary cursor """
 		self.my_connection=pymysql.connect(
 			host=self.mysql_conn["host"],
+			port=self.mysql_conn.get("port", 3306),
 			user=self.mysql_conn["user"],
 			password=self.mysql_conn["passwd"],
 			db=self.my_database,
@@ -316,11 +318,11 @@ class mysql_engine(object):
 		variable_check = self.mysql_con.my_cursor.fetchone()
 		binlog_format = variable_check["Value"]
 		
-		sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'binlog_row_image';"""
-		self.mysql_con.my_cursor.execute(sql_log_bin)
-		variable_check = self.mysql_con.my_cursor.fetchone()
-		binlog_row_image = variable_check["Value"]
-		if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL':
+		#sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'binlog_row_image';"""
+		#self.mysql_con.my_cursor.execute(sql_log_bin)
+		#variable_check = self.mysql_con.my_cursor.fetchone()
+		#binlog_row_image = variable_check["Value"]
+		if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW': # and binlog_row_image.upper() == 'FULL':
 			replica_possible = True
 		else:
 			replica_possible = False
@@ -791,7 +793,7 @@ class mysql_engine(object):
 		self.locked_tables=[]
 		for table_name in self.my_tables:
 			table=self.my_tables[table_name]
-			self.locked_tables.append(table["name"])
+			self.locked_tables.append("`" + table["name"] + "`")
 		t_sql_lock="FLUSH TABLES "+", ".join(self.locked_tables)+" WITH READ LOCK;"
 		self.mysql_con.my_cursor.execute(t_sql_lock)
 		self.get_master_status()
